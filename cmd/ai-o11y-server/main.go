@@ -14,6 +14,8 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/cloud-barista/ai-o11y/internal/config"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/source/tumblebug"
 	"github.com/cloud-barista/ai-o11y/internal/rest"
 )
 
@@ -38,6 +40,13 @@ func main() {
 	if cfg.Auth.Token == "" {
 		log.Warn().Msg("AIO11Y_AUTH_TOKEN is not set: every route is open")
 	}
+
+	sources, err := newTargetSources(cfg)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to register target sources")
+		os.Exit(1)
+	}
+	log.Info().Strs("targetSources", sources.Names()).Msg("Target sources registered")
 
 	server := rest.NewServer(cfg)
 
@@ -67,4 +76,26 @@ func main() {
 		log.Error().Err(err).Msg("Failed to shut down cleanly")
 		os.Exit(1)
 	}
+}
+
+// newTargetSources registers the target source providers the configuration
+// enables. A provider without its settings is left out rather than failing
+// startup, so the service runs with whatever inventories are reachable.
+func newTargetSources(cfg *config.Config) (*monitoring.Registry[monitoring.TargetSource], error) {
+	sources := monitoring.NewRegistry[monitoring.TargetSource]("target source")
+	if cfg.Tumblebug.BaseURL == "" {
+		log.Warn().Msg("AIO11Y_TUMBLEBUG_BASE_URL is not set: CB-Tumblebug nodes are not listed")
+		return sources, nil
+	}
+	client := tumblebug.NewClient(tumblebug.Config{
+		BaseURL:          cfg.Tumblebug.BaseURL,
+		Username:         cfg.Tumblebug.Username,
+		Password:         cfg.Tumblebug.Password,
+		CredentialHolder: cfg.Tumblebug.CredentialHolder,
+		Timeout:          cfg.Tumblebug.Timeout,
+	})
+	if err := sources.Register(tumblebug.ProviderName, tumblebug.NewSource(client)); err != nil {
+		return nil, err
+	}
+	return sources, nil
 }

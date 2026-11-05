@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -12,8 +13,19 @@ const envPrefix = "AIO11Y"
 
 // Config holds all runtime configuration for the service.
 type Config struct {
-	Server ServerConfig
-	Auth   AuthConfig
+	Server    ServerConfig
+	Auth      AuthConfig
+	Tumblebug TumblebugConfig
+}
+
+// TumblebugConfig is where CB-Tumblebug is reached. An empty BaseURL leaves the
+// tumblebug target source unregistered.
+type TumblebugConfig struct {
+	BaseURL          string
+	Username         string
+	Password         string
+	CredentialHolder string
+	Timeout          time.Duration
 }
 
 // ServerConfig is where the REST API listens.
@@ -37,11 +49,17 @@ func Load() (*Config, error) {
 	v.AutomaticEnv()
 
 	v.SetDefault("server.port", 8094)
+	v.SetDefault("tumblebug.timeout", 2*time.Minute)
 
 	// AutomaticEnv only resolves keys that viper already knows about.
 	for _, key := range []string{
 		"server.port",
 		"auth.token",
+		"tumblebug.base_url",
+		"tumblebug.username",
+		"tumblebug.password",
+		"tumblebug.credential_holder",
+		"tumblebug.timeout",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("failed to bind env for %q: %w", key, err)
@@ -51,6 +69,13 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{Port: v.GetInt("server.port")},
 		Auth:   AuthConfig{Token: v.GetString("auth.token")},
+		Tumblebug: TumblebugConfig{
+			BaseURL:          strings.TrimRight(v.GetString("tumblebug.base_url"), "/"),
+			Username:         v.GetString("tumblebug.username"),
+			Password:         v.GetString("tumblebug.password"),
+			CredentialHolder: v.GetString("tumblebug.credential_holder"),
+			Timeout:          v.GetDuration("tumblebug.timeout"),
+		},
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)
