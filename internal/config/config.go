@@ -16,6 +16,18 @@ type Config struct {
 	Server    ServerConfig
 	Auth      AuthConfig
 	Tumblebug TumblebugConfig
+	DB        DBConfig
+}
+
+// DBConfig is the MariaDB that keeps the target table. An empty Host leaves
+// the database out: the service starts, but nothing that needs the target
+// table is available.
+type DBConfig struct {
+	Host     string
+	Port     int
+	Name     string
+	User     string
+	Password string
 }
 
 // TumblebugConfig is where CB-Tumblebug is reached. An empty BaseURL leaves the
@@ -50,6 +62,8 @@ func Load() (*Config, error) {
 
 	v.SetDefault("server.port", 8094)
 	v.SetDefault("tumblebug.timeout", 2*time.Minute)
+	v.SetDefault("db.port", 3306)
+	v.SetDefault("db.name", "aio11y")
 
 	// AutomaticEnv only resolves keys that viper already knows about.
 	for _, key := range []string{
@@ -60,6 +74,11 @@ func Load() (*Config, error) {
 		"tumblebug.password",
 		"tumblebug.credential_holder",
 		"tumblebug.timeout",
+		"db.host",
+		"db.port",
+		"db.name",
+		"db.user",
+		"db.password",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("failed to bind env for %q: %w", key, err)
@@ -76,9 +95,19 @@ func Load() (*Config, error) {
 			CredentialHolder: v.GetString("tumblebug.credential_holder"),
 			Timeout:          v.GetDuration("tumblebug.timeout"),
 		},
+		DB: DBConfig{
+			Host:     v.GetString("db.host"),
+			Port:     v.GetInt("db.port"),
+			Name:     v.GetString("db.name"),
+			User:     v.GetString("db.user"),
+			Password: v.GetString("db.password"),
+		},
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)
+	}
+	if cfg.DB.Host != "" && (cfg.DB.Port <= 0 || cfg.DB.Port > 65535) {
+		return nil, fmt.Errorf("%s_DB_PORT must be between 1 and 65535, got %d", envPrefix, cfg.DB.Port)
 	}
 	return cfg, nil
 }
