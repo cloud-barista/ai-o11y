@@ -1,0 +1,277 @@
+package query
+
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
+)
+
+func renderer(t *testing.T) PromQL {
+	t.Helper()
+	c, err := catalog.New(catalog.Builtin())
+	if err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	return PromQL{Catalog: c}
+}
+
+func targets(ids ...string) monitoring.TargetSet {
+	set := make(monitoring.TargetSet, len(ids))
+	for i, id := range ids {
+		set[i] = monitoring.Target{Kind: "vm", EntityID: id, Name: id}
+	}
+	return set
+}
+
+// cpuUtil is the catalog expression of host.cpu.utilization with the
+// placeholders filled.
+func cpuUtil(sel, rng string) string {
+	return `1 - (sum by (entity_id) (rate(system_cpu_time_seconds_total{state="idle",` + sel + `}[` + rng + `]))` +
+		` / sum by (entity_id) (rate(system_cpu_time_seconds_total{` + sel + `}[` + rng + `])))`
+}
+
+const abc = `entity_id=~"a|b|c"`
+
+// The examples below are current screens, expressed as a QuerySpec. Pattern
+// numbers refer to the survey of the current queries.
+
+// TestRenderCurrentScreens covers the instant-query patterns of the current
+// screens.
+func TestRenderCurrentScreens(t *testing.T) {
+	r := renderer(t)
+	hour := monitoring.Agg{Fn: monitoring.AggAvg, Range: time.Hour}
+	for name, tc := range map[string]struct {
+		q    monitoring.QuerySpec
+		want string
+	}{
+		// Q2: mean per VM over the last duration (VM overview).
+		"Q2 mean per target": {
+			monitoring.QuerySpec{Metric: "host.cpu.utilization", Targets: targets("a", "b", "c"), Window: hour},
+			cpuUtil(abc, "1h"),
+		},
+		// Q6: a VM's graph with a point per interval.
+		"Q6 graph": {
+			monitoring.QuerySpec{
+				Metric: "host.cpu.utilization", Targets: targets("a", "b", "c"),
+				Window: monitoring.Agg{Fn: monitoring.AggAvg, Range: 5 * time.Minute}, Step: 5 * time.Minute,
+				Start: time.Unix(0, 0), End: time.Unix(0, 0).Add(24 * time.Hour),
+			},
+			cpuUtil(abc, "5m"),
+		},
+		// Q4: sum inside a target, here the used space of every mount point.
+		"Q4 within target": {
+			monitoring.QuerySpec{
+				Metric: "host.filesystem.used", Targets: targets("a", "b"), Window: hour,
+				Within: &monitoring.Reduce{Label: "mountpoint", Fn: monitoring.AggSum},
+			},
+			`sum by (entity_id) (avg_over_time((sum by (entity_id, mountpoint) (system_filesystem_usage_bytes{state="used",entity_id=~"a|b"}))[1h:30s]))`,
+		},
+		// Q5: top VMs by the mean over the duration (VM overview top 5).
+		"Q5 top-k": {
+			monitoring.QuerySpec{
+				Metric: "host.cpu.utilization", Targets: targets("a", "b", "c"), Window: hour,
+				TopK: &monitoring.TopK{N: 5, Desc: true},
+			},
+			`topk(5, ` + cpuUtil(abc, "1h") + `)`,
+		},
+		// Q8: one value for a set of targets the mapping layer resolved.
+		"Q8 across the set": {
+			monitoring.QuerySpec{
+				Metric: "host.cpu.utilization", Targets: targets("a", "b", "c"), Window: hour,
+				Across: monitoring.AggAvg,
+			},
+			`avg(` + cpuUtil(abc, "1h") + `)`,
+		},
+	} {
+		got, err := r.Render(tc.q)
+		if err != nil {
+			t.Errorf("%s: Render: %v", name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s:\n got %s\nwant %s", name, got, tc.want)
+		}
+	}
+}
+
+// TestRenderTopKTwoStage covers the graph of the top series (GPU dashboard
+// top 5): the series are ranked over the whole graph range, as the current
+// screen ranks by the same window it draws, and then drawn.
+func TestRenderTopKTwoStage(t *testing.T) {
+	r := renderer(t)
+	start := time.Unix(0, 0)
+	q := monitoring.QuerySpec{
+		Metric: "host.cpu.utilization", Targets: targets("c", "a", "b"),
+		Window: monitoring.Agg{Fn: monitoring.AggAvg, Range: 5 * time.Minute},
+		Step:   5 * time.Minute, Start: start, End: start.Add(24 * time.Hour),
+		TopK: &monitoring.TopK{N: 5, Desc: true},
+	}
+	if _, err := r.Render(q); !errors.Is(err, ErrTwoStage) {
+		t.Fatalf("Render of a graph top-k: err = %v, want ErrTwoStage", err)
+	}
+	pick, err := r.RenderTopK(q)
+	if err != nil {
+		t.Fatalf("RenderTopK: %v", err)
+	}
+	if want := `topk(5, ` + cpuUtil(abc, "1d") + `)`; pick != want {
+		t.Fatalf("first stage ranks over the graph range:\n got %s\nwant %s", pick, want)
+	}
+
+	q.TopK, q.Targets = nil, targets("c", "a")
+	graph, err := r.Render(q)
+	if err != nil {
+		t.Fatalf("second stage: %v", err)
+	}
+	if want := cpuUtil(`entity_id=~"a|c"`, "5m"); graph != want {
+		t.Fatalf("second stage:\n got %s\nwant %s", graph, want)
+	}
+}
+
+func TestRenderWindow(t *testing.T) {
+	r := renderer(t)
+	for name, tc := range map[string]struct {
+		metric string
+		window monitoring.Agg
+		want   string
+	}{
+		"rate current value": {"host.cpu.utilization", monitoring.Agg{}, cpuUtil(`entity_id="a"`, "2m")},
+		"rate peak goes through a subquery": {
+			"host.cpu.utilization", monitoring.Agg{Fn: monitoring.AggMax, Range: time.Hour},
+			`max_over_time((` + cpuUtil(`entity_id="a"`, "2m") + `)[1h:30s])`,
+		},
+		"gauge current value": {
+			"host.memory.utilization", monitoring.Agg{},
+			`sum by (entity_id) (system_memory_utilization_ratio{state="used",entity_id="a"})`,
+		},
+		"gauge last": {
+			"host.memory.utilization", monitoring.Agg{Fn: monitoring.AggLast, Range: 10 * time.Minute},
+			`last_over_time((sum by (entity_id) (system_memory_utilization_ratio{state="used",entity_id="a"}))[10m:30s])`,
+		},
+	} {
+		got, err := r.Render(monitoring.QuerySpec{Metric: tc.metric, Targets: targets("a"), Window: tc.window})
+		if err != nil {
+			t.Errorf("%s: Render: %v", name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s:\n got %s\nwant %s", name, got, tc.want)
+		}
+	}
+}
+
+func TestRenderWithinKeepsOtherLabels(t *testing.T) {
+	got, err := renderer(t).Render(monitoring.QuerySpec{
+		Metric: "host.disk.pending_operations", Targets: targets("a"),
+		Within: &monitoring.Reduce{Label: "device", Fn: monitoring.AggMax},
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.HasPrefix(got, "max by (entity_id) (") {
+		t.Fatalf("reduce kept the dimension or dropped the key:\n%s", got)
+	}
+}
+
+func TestRenderGroupBy(t *testing.T) {
+	got, err := renderer(t).Render(monitoring.QuerySpec{
+		Metric: "host.filesystem.used", Targets: targets("a", "b"),
+		Across: monitoring.AggSum, GroupBy: []string{"mountpoint"},
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.HasPrefix(got, "sum by (mountpoint) (sum by (entity_id, mountpoint) (") {
+		t.Fatalf("unexpected grouping:\n%s", got)
+	}
+}
+
+// TestRenderSelectorIsStable checks that the order and repetition of targets
+// do not change the query text, which a results cache is keyed by.
+func TestRenderSelectorIsStable(t *testing.T) {
+	r := renderer(t)
+	q := monitoring.QuerySpec{Metric: "host.memory.used"}
+	q.Targets = targets("b", "a", "c")
+	first, err := r.Render(q)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	q.Targets = targets("c", "b", "a", "b")
+	if again, _ := r.Render(q); again != first {
+		t.Fatalf("query text depends on target order:\n%s\n%s", first, again)
+	}
+	if !strings.Contains(first, abc) {
+		t.Fatalf("selector not sorted: %s", first)
+	}
+}
+
+func TestRenderEscapesIDs(t *testing.T) {
+	got, err := renderer(t).Render(monitoring.QuerySpec{Metric: "host.memory.used", Targets: targets("a.b", `c"d`)})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(got, `entity_id=~"a\\.b|c\"d"`) {
+		t.Fatalf("ids not escaped: %s", got)
+	}
+}
+
+func TestRenderRejects(t *testing.T) {
+	r := renderer(t)
+	unmapped := targets("a")
+	unmapped[0].EntityID = ""
+	for name, q := range map[string]monitoring.QuerySpec{
+		"unknown metric":       {Metric: "host.nope", Targets: targets("a")},
+		"metric with a gap":    {Metric: "process.cpu.utilization", Targets: targets("a")},
+		"no targets":           {Metric: "host.memory.used"},
+		"unmapped target":      {Metric: "host.memory.used", Targets: unmapped},
+		"window without range": {Metric: "host.memory.used", Targets: targets("a"), Window: monitoring.Agg{Fn: monitoring.AggAvg}},
+		"window without fn":    {Metric: "host.memory.used", Targets: targets("a"), Window: monitoring.Agg{Range: time.Hour}},
+		"unknown window fn":    {Metric: "host.memory.used", Targets: targets("a"), Window: monitoring.Agg{Fn: "median", Range: time.Hour}},
+		"window under step":    {Metric: "host.memory.used", Targets: targets("a"), Window: monitoring.Agg{Fn: monitoring.AggMax, Range: 10 * time.Second}},
+		"within no dimension":  {Metric: "host.memory.used", Targets: targets("a"), Within: &monitoring.Reduce{Label: "device", Fn: monitoring.AggSum}},
+		"within wrong label":   {Metric: "host.filesystem.used", Targets: targets("a"), Within: &monitoring.Reduce{Label: "device", Fn: monitoring.AggSum}},
+		"within last":          {Metric: "host.filesystem.used", Targets: targets("a"), Within: &monitoring.Reduce{Label: "mountpoint", Fn: monitoring.AggLast}},
+		"GPU row not built":    {Metric: "gpu.utilization", Targets: targets("a")},
+		"graph top-k no range": {Metric: "host.memory.used", Targets: targets("a"), Step: time.Minute, TopK: &monitoring.TopK{N: 1}},
+		"group by without fn":  {Metric: "host.memory.used", Targets: targets("a"), GroupBy: []string{"entity_id"}},
+		"bad group by label":   {Metric: "host.memory.used", Targets: targets("a"), Across: monitoring.AggSum, GroupBy: []string{"cloud.region"}},
+		"top-k of zero":        {Metric: "host.memory.used", Targets: targets("a"), TopK: &monitoring.TopK{}},
+	} {
+		if got, err := r.Render(q); err == nil {
+			t.Errorf("%s: Render succeeded: %s", name, got)
+		}
+	}
+	if _, err := (PromQL{}).Render(monitoring.QuerySpec{Metric: "host.memory.used", Targets: targets("a")}); err == nil {
+		t.Error("renderer without a catalog succeeded")
+	}
+}
+
+// TestRenderEveryRow renders each collected catalog row the common ways a
+// screen asks for it; Render parses its output, so a success is valid PromQL.
+func TestRenderEveryRow(t *testing.T) {
+	r := renderer(t)
+	for _, row := range catalog.Builtin() {
+		if row.Gap != "" {
+			continue
+		}
+		specs := []monitoring.QuerySpec{{}, {Across: monitoring.AggAvg}}
+		if row.Kind != monitoring.KindInfo {
+			specs = append(specs,
+				monitoring.QuerySpec{Window: monitoring.Agg{Fn: monitoring.AggAvg, Range: time.Hour}},
+				monitoring.QuerySpec{Window: monitoring.Agg{Fn: monitoring.AggMax, Range: time.Hour}, TopK: &monitoring.TopK{N: 3, Desc: true}},
+			)
+		}
+		if row.Dimension != "" {
+			specs = append(specs, monitoring.QuerySpec{Within: &monitoring.Reduce{Label: row.Dimension, Fn: monitoring.AggSum}})
+		}
+		for _, q := range specs {
+			q.Metric, q.Targets = row.Name, targets("a", "b")
+			if _, err := r.Render(q); err != nil {
+				t.Errorf("%s %+v: %v", row.Name, q, err)
+			}
+		}
+	}
+}

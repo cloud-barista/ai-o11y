@@ -182,6 +182,16 @@ type TargetSet []Target
 // AggFn names an aggregation.
 type AggFn string
 
+// Aggregations a query can ask for. Last only applies to a time window.
+const (
+	AggAvg   AggFn = "avg"
+	AggMin   AggFn = "min"
+	AggMax   AggFn = "max"
+	AggSum   AggFn = "sum"
+	AggCount AggFn = "count"
+	AggLast  AggFn = "last"
+)
+
 // Reduce collapses a sub-axis inside one target, such as GPUs on a host.
 type Reduce struct {
 	Label string
@@ -195,6 +205,8 @@ type Agg struct {
 }
 
 // TopK keeps the N highest (or lowest) series after per-target aggregation.
+// For a graph (Step > 0) the series are ranked over the whole graph range,
+// Start to End, with the Window function, as the current screens rank them.
 type TopK struct {
 	N        int
 	Desc     bool
@@ -202,14 +214,28 @@ type TopK struct {
 }
 
 // QuerySpec is the backend-neutral query template; a renderer per backend
-// turns it into the backend's query language.
+// turns it into the backend's query language. The steps apply in field order:
+// the window over time per series, Within inside each target, Across over the
+// targets, then TopK.
 type QuerySpec struct {
 	Metric  string
 	Targets TargetSet
-	Within  *Reduce
-	Window  Agg
-	Step    time.Duration // 0 means an instant query
-	GroupBy []string      // nil means the whole set
+	// Within collapses the metric's dimension (GPUs, devices) inside each
+	// target; nil keeps one series per dimension value.
+	Within *Reduce
+	// Window aggregates each series over time; the zero value takes the
+	// current value.
+	Window Agg
+	// Step is the graph's point interval; 0 means an instant query.
+	Step time.Duration
+	// Start and End are the graph's range when Step > 0. End alone is the
+	// evaluation time of an instant query; a zero End means now.
+	Start, End time.Time
+	// Across combines the targets, keeping the GroupBy labels; nil GroupBy
+	// gives one value for the whole set. Empty Across keeps one result per
+	// target and allows no GroupBy.
+	Across  AggFn
+	GroupBy []string
 	TopK    *TopK
 }
 
