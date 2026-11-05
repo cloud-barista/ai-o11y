@@ -103,13 +103,61 @@ type CollectorKind interface {
 	Health(ctx context.Context, t Target) (CollectorHealth, error)
 }
 
-// MetricRow is one catalog entry: a common metric name, the expression per
-// backend or provider, and the capabilities a target needs to emit it.
+// MetricKind says how an expression relates to time, which decides how a query
+// aggregates it over a window.
+type MetricKind string
+
+const (
+	// KindGauge is a value at an instant; a window aggregates it with the
+	// *_over_time functions.
+	KindGauge MetricKind = "gauge"
+	// KindRate is already an average over a window: the expression takes
+	// $range itself, typically rate() of a counter.
+	KindRate MetricKind = "rate"
+	// KindInfo carries its value in labels, with a constant sample value.
+	KindInfo MetricKind = "info"
+)
+
+// Placeholders an expression holds for the query renderer to fill in.
+const (
+	// PlaceholderSelector stands for the label matchers that pick the
+	// targets, entity_id included. It sits inside braces.
+	PlaceholderSelector = "$sel"
+	// PlaceholderRange stands for the window of a rate expression.
+	PlaceholderRange = "$range"
+)
+
+// MetricRow is one catalog entry: a common metric name and, for each collector
+// that produces it, the PromQL that computes it from that collector's series.
 type MetricRow struct {
-	Name           string
-	Exprs          map[string]string
-	Requires       []string
-	ExpectedSeries int
+	// Name is the common name screens and queries use, such as
+	// "host.cpu.utilization".
+	Name string
+	// Area groups rows the way the current fields are grouped: cpu, mem, swap,
+	// disk, diskio, net, system, processes, procstat, gpu.
+	Area        string
+	Unit        string
+	Kind        MetricKind
+	Description string
+	// Exprs maps a collector (such as "hostmetrics" or "gpu") to the PromQL
+	// that computes the metric from its series. The result is grouped by
+	// entity_id and Dimension.
+	Exprs map[string]string
+	// Dimension is the label that splits the metric within one target, such as
+	// "device" or "uuid"; empty means one series per target.
+	Dimension string
+	// Requires lists the capabilities a target needs to emit the metric, such
+	// as "os:linux" or "physicalGpuMetrics". A target without one reports the
+	// metric as unsupported rather than missing.
+	Requires []string
+	// Enables lists the collector metrics that are off by default and must be
+	// turned on in the collector configuration for Exprs to have data.
+	Enables []string
+	// Approx marks an expression that only approximates the current field.
+	Approx bool
+	// Gap says why no collector produces the metric yet. A row with a gap has
+	// no Exprs; it stays in the catalog so the gap is visible.
+	Gap string
 }
 
 // MetricCatalog resolves common metric names.
