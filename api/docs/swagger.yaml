@@ -1,0 +1,45 @@
+basePath: /aio11y
+definitions:
+  model.SimpleMsg:
+    properties:
+      message:
+        example: Service is ready
+        type: string
+    type: object
+info:
+  contact: {}
+  description: 'Monitoring control plane for AI-MCMP: monitoring targets, collector
+    configuration and metric queries over a Prometheus-family backend.'
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  title: AI-MCMP AI-O11y Service (Prototype)
+  version: 0.1.0
+paths:
+  /readyz:
+    get:
+      description: Report whether the service finished initialization and can accept
+        requests
+      operationId: GetReadyz
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Service is ready
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service is still initializing
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Check service readiness
+      tags:
+      - '[Health] Service Health'
+securityDefinitions:
+  BearerAuth:
+    description: '"Bearer <token>". Required on every route but readiness and this
+      documentation when AIO11Y_AUTH_TOKEN is set.'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

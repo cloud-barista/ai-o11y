@@ -1,0 +1,62 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Monitoring control plane for AI-MCMP: monitoring targets, collector configuration and metric queries over a Prometheus-family backend.",
+        "title": "AI-MCMP AI-O11y Service (Prototype)",
+        "contact": {},
+        "license": {
+            "name": "Apache 2.0",
+            "url": "http://www.apache.org/licenses/LICENSE-2.0.html"
+        },
+        "version": "0.1.0"
+    },
+    "basePath": "/aio11y",
+    "paths": {
+        "/readyz": {
+            "get": {
+                "description": "Report whether the service finished initialization and can accept requests",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "[Health] Service Health"
+                ],
+                "summary": "Check service readiness",
+                "operationId": "GetReadyz",
+                "responses": {
+                    "200": {
+                        "description": "Service is ready",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
+                    "503": {
+                        "description": "Service is still initializing",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "model.SimpleMsg": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "Service is ready"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "\"Bearer \u003ctoken\u003e\". Required on every route but readiness and this documentation when AIO11Y_AUTH_TOKEN is set.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}
