@@ -85,7 +85,7 @@ func TestRenderIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestRenderIdentityProcessorLast(t *testing.T) {
+func TestRenderProcessorOrder(t *testing.T) {
 	extra := fixedKind{frag: monitoring.ConfigFragment{
 		Receivers:  map[string]any{"otlp": map[string]any{}},
 		Processors: map[string]any{"zzz": map[string]any{}},
@@ -94,8 +94,9 @@ func TestRenderIdentityProcessorLast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if !strings.Contains(string(got), "processors:\n                - zzz\n                - "+monitoring.IdentityProcessor) {
-		t.Fatalf("identity processor is not last:\n%s", got)
+	want := "processors:\n                - zzz\n                - " + monitoring.IdentityProcessor + "\n                - " + BatchProcessor
+	if !strings.Contains(string(got), want) {
+		t.Fatalf("processors are not ordered other, identity, batch:\n%s", got)
 	}
 }
 
@@ -112,6 +113,7 @@ func TestRenderRejects(t *testing.T) {
 		"no endpoint":        {vm(), kinds, monitoring.Endpoint{}},
 		"no kind applies":    {monitoring.Target{Kind: "datastore", EntityID: "x"}, kinds, endpoint},
 		"duplicate id":       {vm(), []monitoring.CollectorKind{Hostmetrics{}, Hostmetrics{}}, endpoint},
+		"batch clashes":      {vm(), []monitoring.CollectorKind{Hostmetrics{}, fixedKind{frag: monitoring.ConfigFragment{Processors: map[string]any{BatchProcessor: nil}}}}, endpoint},
 		"identity clashes":   {vm(), []monitoring.CollectorKind{Hostmetrics{}, fixedKind{frag: monitoring.ConfigFragment{Processors: map[string]any{monitoring.IdentityProcessor: nil}}}}, endpoint},
 	}
 	for name, tc := range cases {

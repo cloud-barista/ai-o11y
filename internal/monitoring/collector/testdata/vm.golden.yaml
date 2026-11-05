@@ -7,6 +7,7 @@ processors:
             - action: upsert
               key: entity_id
               value: d44ikdomt0tac4ejrmmg
+    batch: {}
 receivers:
     host_metrics:
         collection_interval: 30s
@@ -39,5 +40,6 @@ service:
                 - otlp_http
             processors:
                 - attributes/identity
+                - batch
             receivers:
                 - host_metrics

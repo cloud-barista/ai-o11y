@@ -11,6 +11,13 @@ import (
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 )
 
+// BatchProcessor is the processor that groups data points before they are
+// sent. It runs with its defaults: it sends what it has 200ms after the first
+// point arrives, so a collector still sends right after each collection and
+// the send times of different collectors stay as spread as their collection
+// times.
+const BatchProcessor = "batch"
+
 // ExporterOTLPHTTP is the exporter id the renderer writes. The collector
 // release in use renamed "otlphttp" to "otlp_http".
 const ExporterOTLPHTTP = "otlp_http"
@@ -58,11 +65,17 @@ func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.
 	if len(endpoint.Headers) > 0 {
 		exporter["headers"] = maps.Clone(endpoint.Headers)
 	}
-	// The identity processor runs last so no other processor can change the
-	// labels it stamps.
+	// The identity processor runs after every other processor that may change
+	// data points, so none can change the label it stamps; batch only groups
+	// them and goes last, as the collector documentation recommends.
+	if err := mergeInto(processors, map[string]any{BatchProcessor: map[string]any{}}, "processor"); err != nil {
+		return nil, err
+	}
 	pipelineProcessors := slices.Sorted(maps.Keys(processors))
-	pipelineProcessors = slices.DeleteFunc(pipelineProcessors, func(p string) bool { return p == monitoring.IdentityProcessor })
-	pipelineProcessors = append(pipelineProcessors, monitoring.IdentityProcessor)
+	pipelineProcessors = slices.DeleteFunc(pipelineProcessors, func(p string) bool {
+		return p == monitoring.IdentityProcessor || p == BatchProcessor
+	})
+	pipelineProcessors = append(pipelineProcessors, monitoring.IdentityProcessor, BatchProcessor)
 
 	cfg := map[string]any{
 		"receivers":  receivers,
