@@ -8,11 +8,12 @@ import (
 
 type fakeSource struct{ targets []Target }
 
+func (f fakeSource) KeyField() string                              { return "Node.Uid" }
 func (f fakeSource) List(context.Context, Scope) ([]Target, error) { return f.targets, nil }
 
 func TestRegistryGet(t *testing.T) {
 	r := NewRegistry[TargetSource]("target source")
-	want := fakeSource{targets: []Target{{Kind: "vm", ID: "a"}}}
+	want := fakeSource{targets: []Target{{Kind: "vm", EntityID: "a"}}}
 	if err := r.Register("tumblebug", want); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -28,16 +29,16 @@ func TestRegistryGet(t *testing.T) {
 
 func TestRegistryRejects(t *testing.T) {
 	r := NewRegistry[TargetSource]("target source")
-	if _, err := r.Get("openstack"); err == nil {
+	if _, err := r.Get("unknown"); err == nil {
 		t.Fatal("Get of an unregistered name succeeded")
 	}
 	if err := r.Register("", fakeSource{}); err == nil {
 		t.Fatal("Register with an empty name succeeded")
 	}
-	if err := r.Register("vcenter", fakeSource{}); err != nil {
+	if err := r.Register("second", fakeSource{}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := r.Register("vcenter", fakeSource{}); err == nil {
+	if err := r.Register("second", fakeSource{}); err == nil {
 		t.Fatal("duplicate Register succeeded")
 	}
 }

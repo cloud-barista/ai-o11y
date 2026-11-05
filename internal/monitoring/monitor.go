@@ -7,16 +7,53 @@ package monitoring
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
-// Target is one thing to monitor. Labels carry the identity labels; which keys
-// are canonical is not fixed here, so providers fill what they know.
+// LabelEntityID is the one label ai-o11y puts on every series of a target. Its
+// value is the target's key in the management platform, used as is; ai-o11y
+// issues no identifiers of its own. Which platform field the key holds is the
+// adapter's TargetSource.KeyField.
+const LabelEntityID = "entity_id"
+
+// Target is one thing to monitor in the common model every management platform
+// adapter fills, the way CB-Spider maps each CSP onto one VM model: fixed
+// common fields, plus the platform's own attributes in Extra. Apart from
+// EntityID, none of it is put on series; it is what the mapping layer selects
+// targets by.
 type Target struct {
-	Kind         string
-	ID           string
-	Labels       map[string]string
-	Capabilities map[string]string
+	// EntityID is the target's key in the management platform, such as a
+	// Tumblebug node's Uid. It does not change over the target's life; a
+	// re-created target is a different target.
+	EntityID string
+	// Kind is the kind of target, such as "vm" or "host".
+	Kind string
+	// Name is the platform's display name for the target.
+	Name     string
+	Provider string // cloud provider, such as "aws"
+	Region   string
+	// OS is the operating system family, such as "linux" or "windows"; empty
+	// when the platform does not say.
+	OS string
+	// GPUCount and GPUModel describe the GPUs the platform reports for the
+	// target; zero means none.
+	GPUCount int
+	GPUModel string
+	// Extra holds the platform's own attributes, such as a Tumblebug
+	// namespace.
+	Extra map[string]string
+}
+
+// Validate reports a target an adapter must not return.
+func (t Target) Validate() error {
+	if t.EntityID == "" {
+		return fmt.Errorf("target %q has no key", t.Name)
+	}
+	if t.Kind == "" {
+		return fmt.Errorf("target %q has no kind", t.EntityID)
+	}
+	return nil
 }
 
 // Scope narrows a TargetSource listing, for example to one namespace.
@@ -27,6 +64,10 @@ type Scope map[string]string
 // platform has registered. Infrastructure platforms (OpenStack, vCenter, a
 // CSP) are not target sources: they are reached through a collection path.
 type TargetSource interface {
+	// KeyField names the platform field Target.EntityID holds, such as
+	// "NodeInfo.Uid", so what entity_id refers to can be looked up in one
+	// place.
+	KeyField() string
 	List(ctx context.Context, scope Scope) ([]Target, error)
 }
 
