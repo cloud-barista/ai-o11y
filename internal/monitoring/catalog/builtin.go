@@ -157,8 +157,6 @@ func pagingRows() []monitoring.MetricRow {
 	total := `sum by (entity_id) (` + usage + `{$sel})`
 	byState := `sum by (` + by(state) + `) (` + relabel(usage+`{$sel}`, "state", "system.paging.state", nil) + `)`
 	attr := &monitoring.Attribute{Name: "system.paging.state", Values: []string{"used", "free", "cached"}}
-	faultType := monitoring.AttrLabel("system.paging.fault.type")
-	faults := `rate(system_paging_faults_total{$sel}[$range])`
 	// hostmetrics sends no paging usage on a host without swap.
 	return []monitoring.MetricRow{
 		{
@@ -176,10 +174,8 @@ func pagingRows() []monitoring.MetricRow {
 		},
 		{
 			Name: "system.paging.faults", Area: "paging", Unit: "{fault}/s", Kind: monitoring.KindRate,
-			Description: "Page faults of each system.paging.fault.type. Without one, all page faults.",
-			Exprs:       hm(`sum by (entity_id) (` + faults + `)`),
-			Attribute:   &monitoring.Attribute{Name: "system.paging.fault.type", Values: []string{"major", "minor"}},
-			SplitExprs:  hm(`sum by (` + by(faultType) + `) (` + relabel(faults, "type", "system.paging.fault.type", nil) + `)`),
+			Description: "Page faults.",
+			Gap:         "hostmetrics reports Linux page faults multiplied by 4096 (gopsutil), not a count of faults",
 		},
 		{
 			Name: "system.paging.operations", Area: "paging", Unit: "{operation}/s", Kind: monitoring.KindRate,

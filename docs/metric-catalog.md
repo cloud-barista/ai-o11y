@@ -71,7 +71,7 @@ GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpur
 | `system.memory.linux.shared` | common | By |  |  | yes |
 | `system.paging.usage` | common | By | `system.paging.state` (used, free, cached) |  | yes |
 | `system.paging.utilization` | common | 1 | `system.paging.state` (used, free, cached) |  | yes |
-| `system.paging.faults` | common | {fault}/s | `system.paging.fault.type` (major, minor) |  | yes |
+| `system.paging.faults` | common | {fault}/s |  |  | no: hostmetrics reports Linux page faults multiplied by 4096 (gopsutil), not a count of faults |
 | `system.paging.operations` | common | {operation}/s |  |  | no: hostmetrics reports the bytes swapped as its major paging operations on Linux, not a count of operations |
 | `system.disk.io` | common | By/s | `disk.io.direction` (read, write) | `system.device.name` | yes |
 | `system.disk.operations` | common | {operation}/s | `disk.io.direction` (read, write) | `system.device.name` | yes |
