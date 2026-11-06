@@ -89,7 +89,7 @@ func (h Hostmetrics) Render(t monitoring.Target, c monitoring.MetricCatalog) (mo
 		if !ok || row.Gap != "" {
 			continue
 		}
-		for _, name := range metricNameRE.FindAllString(expr, -1) {
+		for _, name := range metricNameRE.FindAllString(expr+" "+row.ZeroFill[catalog.CollectorHostmetrics], -1) {
 			s, err := scraperOf(name)
 			if err != nil {
 				return monitoring.ConfigFragment{}, fmt.Errorf("catalog row %s: %w", row.Name, err)

@@ -114,8 +114,11 @@ func (r PromQL) perTarget(q monitoring.QuerySpec) (string, error) {
 		return "", fmt.Errorf("metric %q has %d expressions; the renderer cannot choose a collector yet", row.Name, len(row.Exprs))
 	}
 	var tmpl string
-	for _, e := range row.Exprs {
+	for collector, e := range row.Exprs {
 		tmpl = e
+		if fill := row.ZeroFill[collector]; q.FillZero && fill != "" {
+			tmpl = "(" + e + ") or (" + fill + ")"
+		}
 	}
 	sel, err := selector(q.Targets)
 	if err != nil {

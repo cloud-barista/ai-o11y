@@ -90,5 +90,16 @@ func validate(r monitoring.MetricRow) error {
 			return fmt.Errorf("metric %q (%s): expression does not keep %s", r.Name, collector, monitoring.LabelEntityID)
 		}
 	}
+	for collector, expr := range r.ZeroFill {
+		if _, ok := r.Exprs[collector]; !ok {
+			return fmt.Errorf("metric %q: zero fill for %s, which has no expression", r.Name, collector)
+		}
+		if !strings.Contains(expr, monitoring.PlaceholderSelector) || !strings.Contains(expr, "entity_id") {
+			return fmt.Errorf("metric %q (%s): zero fill must keep %s and use %s", r.Name, collector, monitoring.LabelEntityID, monitoring.PlaceholderSelector)
+		}
+		if strings.Contains(expr, monitoring.PlaceholderRange) {
+			return fmt.Errorf("metric %q (%s): zero fill takes no %s", r.Name, collector, monitoring.PlaceholderRange)
+		}
+	}
 	return nil
 }

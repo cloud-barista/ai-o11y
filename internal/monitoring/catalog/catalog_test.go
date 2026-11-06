@@ -67,6 +67,15 @@ func TestNewRejects(t *testing.T) {
 		"no entity_id":   func(r *monitoring.MetricRow) { r.Exprs = map[string]string{"h": `max(m{$sel})`} },
 		"gap and exprs":  func(r *monitoring.MetricRow) { r.Gap = "not yet" },
 		"nothing at all": func(r *monitoring.MetricRow) { r.Exprs = nil },
+		"zero fill for another collector": func(r *monitoring.MetricRow) {
+			r.ZeroFill = map[string]string{"gpu": `0 * group by (entity_id) (m{$sel})`}
+		},
+		"zero fill without selector": func(r *monitoring.MetricRow) {
+			r.ZeroFill = map[string]string{"hostmetrics": `0 * group by (entity_id) (m)`}
+		},
+		"zero fill with range": func(r *monitoring.MetricRow) {
+			r.ZeroFill = map[string]string{"hostmetrics": `0 * group by (entity_id) (rate(m{$sel}[$range]))`}
+		},
 	} {
 		row := ok
 		mutate(&row)

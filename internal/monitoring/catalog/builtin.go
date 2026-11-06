@@ -43,6 +43,13 @@ func Builtin() []monitoring.MetricRow {
 
 func hm(expr string) map[string]string { return map[string]string{CollectorHostmetrics: expr} }
 
+// hmReporting is 0 for every target hostmetrics is reporting from: the CPU
+// scraper sends CPU time every scrape. It fills the rows whose hostmetrics
+// series is left out when the value is zero, where the current field sends 0.
+var hmReporting = map[string]string{
+	CollectorHostmetrics: `0 * group by (entity_id) (system_cpu_time_seconds_total{$sel})`,
+}
+
 // cpuShare is the share of CPU time spent in state, across all CPUs. It holds
 // whether or not the collector reports each CPU separately.
 func cpuShare(state string) string {
@@ -152,15 +159,17 @@ func swapRows() []monitoring.MetricRow {
 	pages := func(direction string) string {
 		return fmt.Sprintf(`sum by (entity_id) (rate(system_paging_operations_total{direction=%q,type="major",$sel}[$range]))`, direction)
 	}
+	// hostmetrics sends no swap series on a host without swap, where the
+	// current fields send 0.
 	return []monitoring.MetricRow{
 		{Name: "host.swap.total", Area: "swap", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Swap space (swap.total)", Exprs: hm(total)},
+			Description: "Swap space (swap.total)", Exprs: hm(total), ZeroFill: hmReporting},
 		{Name: "host.swap.used", Area: "swap", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Swap in use (swap.used)", Exprs: hm(state("used"))},
+			Description: "Swap in use (swap.used)", Exprs: hm(state("used")), ZeroFill: hmReporting},
 		{Name: "host.swap.free", Area: "swap", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Free swap (swap.free)", Exprs: hm(state("free"))},
+			Description: "Free swap (swap.free)", Exprs: hm(state("free")), ZeroFill: hmReporting},
 		{Name: "host.swap.utilization", Area: "swap", Unit: "ratio", Kind: monitoring.KindGauge,
-			Description: "Used share of swap (swap.used_percent)", Exprs: hm(state("used") + " / " + total)},
+			Description: "Used share of swap (swap.used_percent)", Exprs: hm(state("used") + " / " + total), ZeroFill: hmReporting},
 		// On Linux the major paging operations are the bytes swapped
 		// (gopsutil Sin/Sout, pages x page size), the counters swap.in and
 		// swap.out read.
@@ -298,6 +307,8 @@ func processesRows() []monitoring.MetricRow {
 			Description: fmt.Sprintf("Processes %s (processes.%s)", name, field),
 			Exprs:       hm(fmt.Sprintf(`sum by (entity_id) (system_processes_count{status=%q,$sel})`, s)),
 			Requires:    []string{RequiresLinux},
+			// hostmetrics leaves a status with no processes out.
+			ZeroFill: hmReporting,
 		}
 	}
 	gap := func(name string) monitoring.MetricRow {

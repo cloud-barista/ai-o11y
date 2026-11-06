@@ -157,6 +157,11 @@ type MetricRow struct {
 	// Enables lists the collector metrics that are off by default and must be
 	// turned on in the collector configuration for Exprs to have data.
 	Enables []string
+	// ZeroFill maps a collector that leaves a zero value out, where the current
+	// field sends 0, to an expression that is 0 for every target the collector
+	// is reporting from. A query with FillZero takes the metric as 0 where it
+	// is missing and this is present.
+	ZeroFill map[string]string
 	// Approx marks an expression that only approximates the current field.
 	Approx bool
 	// Gap says why no collector produces the metric yet. A row with a gap has
@@ -241,6 +246,11 @@ type QuerySpec struct {
 	Across  AggFn
 	GroupBy []string
 	TopK    *TopK
+	// FillZero takes a missing value as 0 for a metric whose collector leaves
+	// zeros out (MetricRow.ZeroFill), for the targets that collector is
+	// otherwise reporting from. Off, a zero shows as no data, the same as a
+	// target that reports nothing.
+	FillZero bool
 }
 
 // Point is one sample.
