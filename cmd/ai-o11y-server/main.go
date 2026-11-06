@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,11 @@ import (
 
 	"github.com/cloud-barista/ai-o11y/internal/config"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/thanos"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/collector"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/mapping"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/query"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/source/tumblebug"
 	"github.com/cloud-barista/ai-o11y/internal/rest"
 )
@@ -48,7 +54,13 @@ func main() {
 	}
 	log.Info().Strs("targetSources", sources.Names()).Msg("Target sources registered")
 
-	server := rest.NewServer(cfg)
+	deps, err := newDeps(cfg, sources)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to set up monitoring")
+		os.Exit(1)
+	}
+
+	server := rest.NewServer(cfg, deps)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -98,4 +110,53 @@ func newTargetSources(cfg *config.Config) (*monitoring.Registry[monitoring.Targe
 		return nil, err
 	}
 	return sources, nil
+}
+
+// newDeps builds what the monitoring routes run on from what is configured:
+// the target table needs the database, syncing it also the management
+// platform, and queries and collector configuration the metrics backend.
+func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetSource]) (rest.Deps, error) {
+	cat, err := catalog.New(catalog.Builtin())
+	if err != nil {
+		return rest.Deps{}, fmt.Errorf("built-in metric catalog: %w", err)
+	}
+	deps := rest.Deps{
+		Catalog:    cat,
+		Collectors: []monitoring.CollectorKind{collector.Hostmetrics{}},
+	}
+	if src, err := sources.Get(tumblebug.ProviderName); err == nil {
+		deps.Source = src
+	}
+
+	if cfg.DB.Host == "" {
+		log.Warn().Msg("AIO11Y_DB_HOST is not set: target routes and queries are unavailable")
+	} else {
+		db, err := mapping.OpenDB(mapping.DBConfig{
+			Host: cfg.DB.Host, Port: cfg.DB.Port, Name: cfg.DB.Name, User: cfg.DB.User, Password: cfg.DB.Password,
+		})
+		if err != nil {
+			return rest.Deps{}, err
+		}
+		store := mapping.NewStore(db, tumblebug.ProviderName)
+		deps.Targets = store
+		if deps.Source != nil {
+			deps.Syncer = mapping.NewSyncer(store, deps.Source, mapping.DefaultSyncPause)
+		}
+	}
+
+	if cfg.Thanos.QueryURL == "" {
+		log.Warn().Msg("AIO11Y_THANOS_QUERY_URL is not set: queries and collector configuration are unavailable")
+	} else {
+		b, err := thanos.New(thanos.Config{
+			QueryURL:        cfg.Thanos.QueryURL,
+			Write:           monitoring.Endpoint{URL: cfg.Thanos.WriteURL},
+			PartialResponse: cfg.Thanos.PartialResponse,
+			Timeout:         cfg.Thanos.Timeout,
+		}, query.PromQL{Catalog: cat})
+		if err != nil {
+			return rest.Deps{}, err
+		}
+		deps.Backend = b
+	}
+	return deps, nil
 }

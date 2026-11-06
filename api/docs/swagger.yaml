@@ -1,9 +1,273 @@
 basePath: /aio11y
 definitions:
+  model.MetricInfo:
+    properties:
+      area:
+        example: cpu
+        type: string
+      description:
+        example: Share of CPU time not idle (current 100 - usage_idle)
+        type: string
+      dimension:
+        description: Dimension splits the metric within a target, such as "device".
+        example: ""
+        type: string
+      gap:
+        example: ""
+        type: string
+      kind:
+        enum:
+        - gauge
+        - rate
+        - info
+        example: rate
+        type: string
+      name:
+        example: host.cpu.utilization
+        type: string
+      requires:
+        description: Requires lists what a target needs to have the metric, such as
+          "os:linux".
+        items:
+          type: string
+        type: array
+      supported:
+        description: |-
+          Supported is false when no collector produces the metric as the current
+          field means it; Gap says why.
+        example: true
+        type: boolean
+      unit:
+        example: ratio
+        type: string
+      zeroFill:
+        description: ZeroFill is true when a query can take a missing value as 0 (fillZero).
+        example: false
+        type: boolean
+    type: object
+  model.MetricListResp:
+    properties:
+      metrics:
+        items:
+          $ref: '#/definitions/model.MetricInfo'
+        type: array
+    type: object
+  model.PointInfo:
+    properties:
+      t:
+        type: string
+      v:
+        type: number
+    type: object
+  model.QueryReq:
+    properties:
+      across:
+        description: Across combines the targets with fn, keeping the groupBy labels.
+        example: ""
+        type: string
+      end:
+        type: string
+      fillZero:
+        description: |-
+          FillZero takes a missing value as 0 for a metric whose collector does
+          not send zeros (MetricInfo.zeroFill), for targets otherwise reporting.
+        example: false
+        type: boolean
+      groupBy:
+        items:
+          type: string
+        type: array
+      metric:
+        example: host.cpu.utilization
+        type: string
+      selector:
+        additionalProperties:
+          type: string
+        type: object
+      start:
+        type: string
+      step:
+        description: |-
+          Step makes a graph from start to end; empty asks for one value at end
+          (now when end is empty).
+        example: 1m
+        type: string
+      targetIds:
+        items:
+          type: string
+        type: array
+      topK:
+        $ref: '#/definitions/model.TopKReq'
+      windowFn:
+        description: |-
+          Window aggregates each series over the last windowRange with
+          windowFn: avg, min, max, sum, count or last.
+        example: ""
+        type: string
+      windowRange:
+        example: ""
+        type: string
+      within:
+        description: |-
+          Within collapses the metric's dimension (devices, GPUs) inside each
+          target with fn: avg, min, max, sum or count.
+        example: ""
+        type: string
+    type: object
+  model.QueryResp:
+    properties:
+      series:
+        items:
+          $ref: '#/definitions/model.SeriesInfo'
+        type: array
+      targets:
+        additionalProperties:
+          $ref: '#/definitions/model.TargetInfo'
+        description: Targets describes, by id, the targets the series carry an entity_id
+          of.
+        type: object
+    type: object
+  model.SeriesInfo:
+    properties:
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      points:
+        items:
+          $ref: '#/definitions/model.PointInfo'
+        type: array
+    type: object
   model.SimpleMsg:
     properties:
       message:
         example: Service is ready
+        type: string
+    type: object
+  model.TargetInfo:
+    properties:
+      attributes:
+        additionalProperties:
+          type: string
+        description: Attributes are the platform attributes, such as nsId, infraId
+          and nodeId.
+        type: object
+      gpuCount:
+        example: 1
+        type: integer
+      gpuModel:
+        example: NVIDIA T4
+        type: string
+      id:
+        description: |-
+          ID is the target's key: the management platform's own key for it, the
+          CB-Tumblebug node Uid, and the entity_id its series carry.
+        example: d44ikdomt0tac4ejrmmg
+        type: string
+      kind:
+        example: vm
+        type: string
+      name:
+        example: web-1
+        type: string
+      os:
+        example: linux
+        type: string
+      provider:
+        example: aws
+        type: string
+      region:
+        example: ap-northeast-2
+        type: string
+    type: object
+  model.TargetListResp:
+    properties:
+      targets:
+        items:
+          $ref: '#/definitions/model.TargetInfo'
+        type: array
+    type: object
+  model.TargetReq:
+    properties:
+      attributes:
+        additionalProperties:
+          type: string
+        description: Attributes are further platform attributes to select the target
+          by.
+        type: object
+      gpuCount:
+        example: 1
+        type: integer
+      gpuModel:
+        example: NVIDIA T4
+        type: string
+      infraId:
+        example: infra01
+        type: string
+      kind:
+        description: Kind is "node". "k8s" is reserved and refused with 422.
+        enum:
+        - node
+        - k8s
+        example: node
+        type: string
+      name:
+        example: web-1
+        type: string
+      nodeId:
+        example: node01
+        type: string
+      nsId:
+        example: ns01
+        type: string
+      os:
+        description: OS is "linux", "windows" or empty when unknown.
+        enum:
+        - linux
+        - windows
+        example: linux
+        type: string
+      provider:
+        example: aws
+        type: string
+      region:
+        example: ap-northeast-2
+        type: string
+      uid:
+        description: Uid is the CB-Tumblebug node Uid, the target's key.
+        example: d44ikdomt0tac4ejrmmg
+        type: string
+    type: object
+  model.TargetSyncResp:
+    properties:
+      deleted:
+        description: Deleted targets were confirmed gone by the platform.
+        items:
+          type: string
+        type: array
+      kept:
+        additionalProperties:
+          type: string
+        description: |-
+          Kept targets were missing from the listing but not confirmed gone, with
+          the reason.
+        type: object
+      updated:
+        description: Updated targets were described again as the platform lists them.
+        items:
+          type: string
+        type: array
+    type: object
+  model.TopKReq:
+    properties:
+      desc:
+        example: true
+        type: boolean
+      "n":
+        example: 5
+        type: integer
+      perLabel:
+        example: ""
         type: string
     type: object
 info:
@@ -16,6 +280,66 @@ info:
   title: AI-MCMP AI-O11y Service (Prototype)
   version: 0.1.0
 paths:
+  /metrics:
+    get:
+      description: 'List the metric catalog: every common metric name a query can
+        ask for, and the ones no collector produces yet with the reason.'
+      operationId: GetAllMetrics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.MetricListResp'
+      summary: List metrics
+      tags:
+      - '[Monitoring] Metrics'
+  /query:
+    post:
+      consumes:
+      - application/json
+      description: Query one metric over targets named by id or selected by their
+        attributes, as one value per series or as a graph from start to end. The answer
+        carries the series and the targets they belong to.
+      operationId: PostQuery
+      parameters:
+      - description: Query
+        in: body
+        name: queryReq
+        required: true
+        schema:
+          $ref: '#/definitions/model.QueryReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.QueryResp'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "404":
+          description: Unknown metric or target
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "422":
+          description: Metric is not supported
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "502":
+          description: The metrics backend did not answer
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Query a metric
+      tags:
+      - '[Monitoring] Metrics'
   /readyz:
     get:
       description: Report whether the service finished initialization and can accept
@@ -35,6 +359,216 @@ paths:
       summary: Check service readiness
       tags:
       - '[Health] Service Health'
+  /targets:
+    get:
+      description: 'List the registered targets. Every query parameter is a condition
+        on an attribute, all of which must match exactly: a common field (kind, name,
+        provider, region, os, gpuCount, gpuModel) or a platform attribute such as
+        nsId, infraId or nodeId.'
+      operationId: GetAllTargets
+      parameters:
+      - description: CB-Tumblebug namespace
+        in: query
+        name: nsId
+        type: string
+      - description: CB-Tumblebug Infra
+        in: query
+        name: infraId
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.TargetListResp'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: List targets
+      tags:
+      - '[Monitoring] Targets'
+    post:
+      consumes:
+      - application/json
+      description: Register a target when its agent is installed. The body names the
+        node as ai-app names a deployment target and carries its description from
+        CB-Tumblebug; without uid the description is read from CB-Tumblebug. Registering
+        a target again replaces its description.
+      operationId: PostTarget
+      parameters:
+      - description: Target to register
+        in: body
+        name: targetReq
+        required: true
+        schema:
+          $ref: '#/definitions/model.TargetReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.TargetInfo'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "404":
+          description: The node is not in CB-Tumblebug
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "422":
+          description: Kind is not supported
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "502":
+          description: CB-Tumblebug did not answer
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Register a target
+      tags:
+      - '[Monitoring] Targets'
+  /targets/{targetId}:
+    delete:
+      description: Delete a registered target, as when its agent is removed. Its stored
+        series stay in the backend.
+      operationId: DeleteTarget
+      parameters:
+      - description: Target id (CB-Tumblebug node Uid)
+        in: path
+        name: targetId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Delete a target
+      tags:
+      - '[Monitoring] Targets'
+    get:
+      description: Get one registered target by its id.
+      operationId: GetTarget
+      parameters:
+      - description: Target id (CB-Tumblebug node Uid)
+        in: path
+        name: targetId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.TargetInfo'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Get a target
+      tags:
+      - '[Monitoring] Targets'
+  /targets/{targetId}/collectorConfig:
+    get:
+      description: 'Render the OpenTelemetry Collector configuration the target''s
+        agent runs: the collectors that apply to it, its entity_id stamped on every
+        series, and the metrics backend to send them to.'
+      operationId: GetTargetCollectorConfig
+      parameters:
+      - description: Target id (CB-Tumblebug node Uid)
+        in: path
+        name: targetId
+        required: true
+        type: string
+      produces:
+      - application/yaml
+      responses:
+        "200":
+          description: Collector configuration (YAML)
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Get a target's collector configuration
+      tags:
+      - '[Monitoring] Targets'
+  /targets/sync:
+    post:
+      description: 'Bring the target table in step with CB-Tumblebug: describe every
+        listed target again, and delete a target missing from the listing only when
+        CB-Tumblebug answers that it is gone. Targets are never added here; they are
+        registered at agent install. If the listing fails, nothing changes.'
+      operationId: PostTargetSync
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.TargetSyncResp'
+        "409":
+          description: A sync is already running
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "502":
+          description: The management platform could not be listed; nothing changed
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Sync targets with the management platform
+      tags:
+      - '[Monitoring] Targets'
 securityDefinitions:
   BearerAuth:
     description: '"Bearer <token>". Required on every route but readiness and this

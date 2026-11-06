@@ -17,6 +17,21 @@ type Config struct {
 	Auth      AuthConfig
 	Tumblebug TumblebugConfig
 	DB        DBConfig
+	Thanos    ThanosConfig
+}
+
+// ThanosConfig is the metrics backend. An empty QueryURL leaves queries and
+// collector configuration unavailable.
+type ThanosConfig struct {
+	// QueryURL is the Thanos Querier HTTP address.
+	QueryURL string
+	// WriteURL is where collectors send samples over OTLP/HTTP: a Prometheus
+	// with a Sidecar or a Thanos Receive, as the deployment is built.
+	WriteURL string
+	// PartialResponse lets a query answer from the stores that respond when
+	// another fails. Off by default: any failing store fails the query.
+	PartialResponse bool
+	Timeout         time.Duration
 }
 
 // DBConfig is the MariaDB that keeps the target table. An empty Host leaves
@@ -64,6 +79,8 @@ func Load() (*Config, error) {
 	v.SetDefault("tumblebug.timeout", 2*time.Minute)
 	v.SetDefault("db.port", 3306)
 	v.SetDefault("db.name", "aio11y")
+	v.SetDefault("thanos.partial_response", false)
+	v.SetDefault("thanos.timeout", 2*time.Minute)
 
 	// AutomaticEnv only resolves keys that viper already knows about.
 	for _, key := range []string{
@@ -79,6 +96,10 @@ func Load() (*Config, error) {
 		"db.name",
 		"db.user",
 		"db.password",
+		"thanos.query_url",
+		"thanos.write_url",
+		"thanos.partial_response",
+		"thanos.timeout",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("failed to bind env for %q: %w", key, err)
@@ -101,6 +122,12 @@ func Load() (*Config, error) {
 			Name:     v.GetString("db.name"),
 			User:     v.GetString("db.user"),
 			Password: v.GetString("db.password"),
+		},
+		Thanos: ThanosConfig{
+			QueryURL:        strings.TrimRight(v.GetString("thanos.query_url"), "/"),
+			WriteURL:        v.GetString("thanos.write_url"),
+			PartialResponse: v.GetBool("thanos.partial_response"),
+			Timeout:         v.GetDuration("thanos.timeout"),
 		},
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {

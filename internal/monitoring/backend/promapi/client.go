@@ -156,7 +156,7 @@ func (c *Client) postOnce(ctx context.Context, path, body string, out any) (time
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("failed to call query API %s: %w", path, err)
+		return 0, fmt.Errorf("%w: %s: %w", ErrUnavailable, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -188,6 +188,9 @@ func (c *Client) postOnce(ctx context.Context, path, body string, out any) (time
 	}
 	return 0, nil
 }
+
+// ErrUnavailable wraps a failure to reach the query API at all.
+var ErrUnavailable = errors.New("query API unreachable")
 
 // APIError is an answer the query API did not mark as a success.
 type APIError struct {

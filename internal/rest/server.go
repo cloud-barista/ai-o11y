@@ -24,9 +24,9 @@ type Server struct {
 	port int
 }
 
-// NewServer builds the AI-O11y service. Monitoring routes (targets, collector
-// configuration, queries) are added here as their packages land.
-func NewServer(cfg *config.Config) *Server {
+// NewServer builds the AI-O11y service: readiness, the API documentation and
+// the monitoring routes over deps.
+func NewServer(cfg *config.Config, deps Deps) *Server {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -37,6 +37,16 @@ func NewServer(cfg *config.Config) *Server {
 	g := e.Group(BasePath)
 	g.GET("/readyz", RestGetReadyz)
 	g.GET("/api/*", echoSwagger.WrapHandler)
+
+	h := &handler{Deps: deps}
+	g.POST("/targets", h.RestPostTarget)
+	g.GET("/targets", h.RestGetAllTargets)
+	g.POST("/targets/sync", h.RestPostTargetSync)
+	g.GET("/targets/:targetId", h.RestGetTarget)
+	g.DELETE("/targets/:targetId", h.RestDeleteTarget)
+	g.GET("/targets/:targetId/collectorConfig", h.RestGetTargetCollectorConfig)
+	g.GET("/metrics", h.RestGetAllMetrics)
+	g.POST("/query", h.RestPostQuery)
 
 	return &Server{echo: e, port: cfg.Server.Port}
 }

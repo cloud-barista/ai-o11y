@@ -19,6 +19,10 @@ const DefaultSyncPause = 400 * time.Millisecond
 // ErrSyncRunning is returned when a sync is asked for while one is running.
 var ErrSyncRunning = errors.New("a sync is already running")
 
+// ErrListFailed wraps a failure to list the platform's targets; the sync
+// changed nothing.
+var ErrListFailed = errors.New("failed to list targets, nothing changed")
+
 // Syncer brings the target table in step with the management platform. Queries
 // read the table only; syncing is the one place the platform is asked, and it
 // runs only when called.
@@ -72,7 +76,7 @@ func (s *Syncer) Sync(ctx context.Context) (SyncResult, error) {
 	}
 	listed, err := s.source.List(ctx, nil)
 	if err != nil {
-		return result, fmt.Errorf("failed to list targets, nothing changed: %w", err)
+		return result, fmt.Errorf("%w: %w", ErrListFailed, err)
 	}
 	byKey := make(map[string]monitoring.Target, len(listed))
 	for _, t := range listed {
