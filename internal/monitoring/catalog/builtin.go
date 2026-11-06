@@ -116,7 +116,11 @@ func memRows() []monitoring.MetricRow {
 		row("free", "free", "Free memory (mem.free)"),
 		row("buffered", "buffered", "Memory in kernel buffers (mem.buffered)", RequiresLinux),
 		row("cached", "cached", "Memory in page cache (mem.cached)", RequiresLinux),
-		row("inactive", "inactive", "Inactive memory (mem.inactive)", RequiresLinux),
+		{
+			Name: "host.memory.inactive", Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
+			Description: "Inactive memory (mem.inactive)",
+			Gap:         "hostmetrics reports an inactive memory state on non-Linux hosts only",
+		},
 		{
 			Name: "host.memory.active", Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
 			Description: "Active memory (mem.active)",
@@ -149,10 +153,13 @@ func swapRows() []monitoring.MetricRow {
 			Description: "Free swap (swap.free)", Exprs: hm(state("free"))},
 		{Name: "host.swap.utilization", Area: "swap", Unit: "ratio", Kind: monitoring.KindGauge,
 			Description: "Used share of swap (swap.used_percent)", Exprs: hm(state("used") + " / " + total)},
-		{Name: "host.swap.in", Area: "swap", Unit: "pages/s", Kind: monitoring.KindRate,
-			Description: "Pages swapped in (swap.in, which counts bytes)", Exprs: hm(pages("page_in")), Approx: true},
-		{Name: "host.swap.out", Area: "swap", Unit: "pages/s", Kind: monitoring.KindRate,
-			Description: "Pages swapped out (swap.out, which counts bytes)", Exprs: hm(pages("page_out")), Approx: true},
+		// On Linux the major paging operations are the bytes swapped
+		// (gopsutil Sin/Sout, pages x page size), the counters swap.in and
+		// swap.out read.
+		{Name: "host.swap.in", Area: "swap", Unit: "bytes/s", Kind: monitoring.KindRate,
+			Description: "Bytes swapped in (swap.in)", Exprs: hm(pages("page_in"))},
+		{Name: "host.swap.out", Area: "swap", Unit: "bytes/s", Kind: monitoring.KindRate,
+			Description: "Bytes swapped out (swap.out)", Exprs: hm(pages("page_out"))},
 	}
 }
 
@@ -175,7 +182,10 @@ func diskRows() []monitoring.MetricRow {
 		row("total", "bytes", "File system size (disk.total)", sum(usage, "")),
 		row("free", "bytes", "Free space (disk.free)", sum(usage, "free")),
 		row("used", "bytes", "Used space (disk.used)", sum(usage, "used")),
-		row("utilization", "ratio", "Used share of the file system (disk.used_percent)", sum(usage, "used")+" / "+sum(usage, "")),
+		// disk.used_percent is used / (used + free): space reserved for root
+		// counts toward neither, so it is left out of the share too.
+		row("utilization", "ratio", "Used share of the file system (disk.used_percent)",
+			sum(usage, "used")+" / ("+sum(usage, "used")+" + "+sum(usage, "free")+")"),
 		row("inodes.total", "inodes", "Inodes (disk.inodes_total)", sum(inodes, ""), RequiresLinux),
 		row("inodes.free", "inodes", "Free inodes (disk.inodes_free)", sum(inodes, "free"), RequiresLinux),
 		row("inodes.used", "inodes", "Used inodes (disk.inodes_used)", sum(inodes, "used"), RequiresLinux),
@@ -272,10 +282,12 @@ func systemRows() []monitoring.MetricRow {
 }
 
 func processesRows() []monitoring.MetricRow {
-	status := func(name, s string) monitoring.MetricRow {
+	// status is the row for the processes in hostmetrics status s, which the
+	// current field counts.
+	status := func(name, s, field string) monitoring.MetricRow {
 		return monitoring.MetricRow{
 			Name: "host.processes." + name, Area: "processes", Unit: "processes", Kind: monitoring.KindGauge,
-			Description: fmt.Sprintf("Processes %s (processes.%s)", name, name),
+			Description: fmt.Sprintf("Processes %s (processes.%s)", name, field),
 			Exprs:       hm(fmt.Sprintf(`sum by (entity_id) (system_processes_count{status=%q,$sel})`, s)),
 			Requires:    []string{RequiresLinux},
 		}
@@ -294,12 +306,12 @@ func processesRows() []monitoring.MetricRow {
 			Exprs:       hm(`sum by (entity_id) (system_processes_count{$sel})`),
 			Requires:    []string{RequiresLinux}, Approx: true,
 		},
-		status("running", "running"),
-		status("blocked", "blocked"),
-		status("sleeping", "sleeping"),
-		status("stopped", "stopped"),
-		status("zombie", "zombies"),
-		status("idle", "idle"),
+		status("running", "running", "running"),
+		status("blocked", "blocked", "blocked"),
+		status("sleeping", "sleeping", "sleeping"),
+		status("stopped", "stopped", "stopped"),
+		status("zombie", "zombies", "zombies"),
+		status("idle", "idle", "idle"),
 		gap("dead"),
 		gap("parked"),
 	}
