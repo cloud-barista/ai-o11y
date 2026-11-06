@@ -83,7 +83,7 @@ func (targetRow) TableName() string { return "targets" }
 
 // attributeRow is one attribute a selector can match: every common field and
 // every platform attribute of a target, one row each. The (attr, value) index
-// answers "which targets have namespace=team-a" without knowing in advance
+// answers "which targets have nsId=ns01" without knowing in advance
 // which attributes a platform has.
 type attributeRow struct {
 	EntityID string `gorm:"primaryKey;type:varchar(64) COLLATE utf8mb4_bin"`

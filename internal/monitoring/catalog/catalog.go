@@ -1,5 +1,5 @@
-// Package catalog holds the metric catalog: the common metric names screens
-// and queries use, and how each is computed from each collector's series.
+// Package catalog holds the metric catalog: the fields screens and queries
+// name, and how each is computed from each collector's series.
 package catalog
 
 import (

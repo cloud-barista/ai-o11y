@@ -71,6 +71,9 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
 - **GPU**: the GPU receiver reads `nvidia-smi` only. MIG and XID fields wait for
   an NVML source, GPUs of other vendors are not read, and a target's metric
   listing cannot tell which fields its particular GPU leaves empty.
+- **Registration**: the body of `POST /targets` is ai-app's, named in
+  CB-Tumblebug's terms (`nsId`, `infraId`, `nodeId`); another management
+  platform needs it reworked.
 - **Sync**: a sync replaces a target's description with what CB-Tumblebug lists,
   attributes given at registration included.
 - **Backend**: verified against a local Prometheus 3.16 with a Thanos 0.42

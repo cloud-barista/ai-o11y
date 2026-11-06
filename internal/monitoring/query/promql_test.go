@@ -27,7 +27,7 @@ func targets(ids ...string) monitoring.TargetSet {
 	return set
 }
 
-// cpuUtil is the catalog expression of host.cpu.utilization with the
+// cpuUtil is the catalog expression of system.cpu.utilization with the
 // placeholders filled.
 func cpuUtil(sel, rng string) string {
 	return `1 - (sum by (entity_id) (rate(system_cpu_time_seconds_total{state="idle",` + sel + `}[` + rng + `]))` +

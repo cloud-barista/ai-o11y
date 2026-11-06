@@ -12,14 +12,14 @@ import (
 )
 
 func TestFits(t *testing.T) {
-	ok := monitoring.Target{EntityID: strings.Repeat("k", 64), Kind: "vm", Name: strings.Repeat("가", 255),
+	ok := monitoring.Target{EntityID: strings.Repeat("k", 64), Kind: "vm", Name: strings.Repeat("é", 255),
 		Extra: map[string]string{strings.Repeat("a", 64): strings.Repeat("v", 255)}}
 	if err := fits(ok); err != nil {
 		t.Errorf("target at the column sizes: %v", err)
 	}
 	for name, mutate := range map[string]func(*monitoring.Target){
 		"long key":        func(t *monitoring.Target) { t.EntityID += "k" },
-		"long name":       func(t *monitoring.Target) { t.Name += "가" },
+		"long name":       func(t *monitoring.Target) { t.Name += "é" },
 		"long attribute":  func(t *monitoring.Target) { t.Extra[strings.Repeat("b", 65)] = "v" },
 		"long attr value": func(t *monitoring.Target) { t.Extra["x"] = strings.Repeat("v", 256) },
 	} {
