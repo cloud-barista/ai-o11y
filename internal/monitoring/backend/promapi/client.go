@@ -19,14 +19,11 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/retry"
 )
 
 const (
-	// maxRetries is how many times a request the backend rate-limited (429) is
-	// sent again, waiting longer each time.
-	maxRetries       = 4
-	defaultRetryBase = 500 * time.Millisecond
-	maxErrorBody     = 4 << 10
+	maxErrorBody = 4 << 10
 	// httpSlack is how much longer the HTTP client waits than the query
 	// timeout it sends, so the backend's own timeout error arrives first.
 	httpSlack = 5 * time.Second
@@ -53,7 +50,7 @@ type Client struct {
 	cfg        Config
 	baseURL    string
 	httpClient *http.Client
-	retryBase  time.Duration
+	retry      retry.Policy
 }
 
 // NewClient builds a Client from cfg.
@@ -68,7 +65,7 @@ func NewClient(cfg Config) (*Client, error) {
 		cfg:        cfg,
 		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
 		httpClient: &http.Client{Timeout: cfg.Timeout + httpSlack},
-		retryBase:  defaultRetryBase,
+		retry:      retry.Default(),
 	}, nil
 }
 
@@ -105,7 +102,8 @@ func (c *Client) Series(ctx context.Context, match string) ([]map[string]string,
 }
 
 func (c *Client) query(ctx context.Context, path string, form url.Values) ([]monitoring.Series, error) {
-	form.Set("timeout", c.cfg.Timeout.String())
+	// Seconds: Prometheus does not read Go's "1.5s" or "2m0s" forms.
+	form.Set("timeout", strconv.FormatFloat(c.cfg.Timeout.Seconds(), 'f', -1, 64))
 	var data queryData
 	if err := c.post(ctx, path, form, &data); err != nil {
 		return nil, err
@@ -114,33 +112,22 @@ func (c *Client) query(ctx context.Context, path string, form url.Values) ([]mon
 }
 
 // post sends form to path with the configured parameters and decodes the data
-// of a successful answer into out. A 429 is retried up to maxRetries times
-// with a growing wait.
+// of a successful answer into out. A 429 is retried with backoff
+// (internal/retry); queries are reads, so sending one again is safe.
 func (c *Client) post(ctx context.Context, path string, form url.Values, out any) error {
 	for name, values := range c.cfg.Params {
 		form[name] = values
 	}
 	body := form.Encode()
-	wait := c.retryBase
-	for attempt := 0; ; attempt++ {
-		retryAfter, err := c.postOnce(ctx, path, body, out)
+	return c.retry.Do(ctx, func() (bool, time.Duration, error) {
+		after, err := c.postOnce(ctx, path, body, out)
 		var apiErr *APIError
-		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusTooManyRequests || attempt == maxRetries {
-			return err
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
+			log.Debug().Str("path", path).Msg("Query API rate-limited the request")
+			return true, after, err
 		}
-		if retryAfter > 0 {
-			wait = retryAfter
-		}
-		log.Debug().Str("path", path).Dur("wait", wait).Int("retry", attempt+1).Msg("Query API rate-limited the request")
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-		wait *= 2
-	}
+		return false, 0, err
+	})
 }
 
 func (c *Client) postOnce(ctx context.Context, path, body string, out any) (time.Duration, error) {
@@ -171,11 +158,7 @@ func (c *Client) postOnce(ctx context.Context, path, body string, out any) (time
 		if jsonErr != nil || apiErr.Message == "" {
 			apiErr.Message = strings.TrimSpace(string(raw[:min(len(raw), maxErrorBody)]))
 		}
-		var retryAfter time.Duration
-		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
-			retryAfter = time.Duration(secs) * time.Second
-		}
-		return retryAfter, apiErr
+		return retry.After(resp.Header), apiErr
 	}
 	if jsonErr != nil {
 		return 0, fmt.Errorf("failed to decode query API response for %s: %w", path, jsonErr)

@@ -50,7 +50,7 @@ func TestQuerySendsThanosParams(t *testing.T) {
 		t.Fatalf("requests = %d, want 2 chunks of at most 2 ids", len(forms))
 	}
 	for _, f := range forms {
-		if f.Get("dedup") != "true" || f.Get("partial_response") != "false" || f.Get("timeout") != "2m0s" {
+		if f.Get("dedup") != "true" || f.Get("partial_response") != "false" || f.Get("timeout") != "120" {
 			t.Errorf("params = %v, want dedup on, partial response off, default timeout", f)
 		}
 	}

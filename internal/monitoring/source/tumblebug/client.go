@@ -10,20 +10,17 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
+
+	"github.com/cloud-barista/ai-o11y/internal/retry"
 )
 
 const (
 	headerCredentialHolder = "x-credential-holder"
 	maxErrorBodyBytes      = 4 << 10
-	// maxRetries is how many times a request CB-Tumblebug rate-limited (429)
-	// is sent again, waiting longer each time.
-	maxRetries       = 4
-	defaultRetryBase = 500 * time.Millisecond
 )
 
 // Config is where CB-Tumblebug is reached and how.
@@ -45,9 +42,7 @@ type Client struct {
 	password         string
 	credentialHolder string
 	httpClient       *http.Client
-	// retryBase is the first wait after a 429; each retry doubles it unless
-	// CB-Tumblebug names a wait in Retry-After.
-	retryBase time.Duration
+	retry            retry.Policy
 }
 
 // NewClient builds a Client from configuration.
@@ -58,7 +53,7 @@ func NewClient(cfg Config) *Client {
 		password:         cfg.Password,
 		credentialHolder: cfg.CredentialHolder,
 		httpClient:       &http.Client{Timeout: cfg.Timeout},
-		retryBase:        defaultRetryBase,
+		retry:            retry.Default(),
 	}
 }
 
@@ -82,28 +77,17 @@ func StatusCode(err error) int {
 }
 
 // get sends a GET request to CB-Tumblebug and decodes the JSON response into
-// out. A 429 is retried up to maxRetries times with a growing wait; the last
-// 429 is returned as an APIError.
+// out. A 429 is retried with backoff (internal/retry); the last 429 is
+// returned as an APIError.
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {
-	wait := c.retryBase
-	for attempt := 0; ; attempt++ {
-		retryAfter, err := c.getOnce(ctx, path, query, out)
-		if StatusCode(err) != http.StatusTooManyRequests || attempt == maxRetries {
-			return err
+	return c.retry.Do(ctx, func() (bool, time.Duration, error) {
+		after, err := c.getOnce(ctx, path, query, out)
+		if StatusCode(err) == http.StatusTooManyRequests {
+			log.Debug().Str("path", path).Msg("CB-Tumblebug rate-limited the request")
+			return true, after, err
 		}
-		if retryAfter > 0 {
-			wait = retryAfter
-		}
-		log.Debug().Str("path", path).Dur("wait", wait).Int("retry", attempt+1).Msg("CB-Tumblebug rate-limited the request")
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-		wait *= 2
-	}
+		return false, 0, err
+	})
 }
 
 // getOnce sends one GET request. On a 429 it also returns the wait
@@ -134,11 +118,7 @@ func (c *Client) getOnce(ctx context.Context, path string, query url.Values, out
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var retryAfter time.Duration
-		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
-			retryAfter = time.Duration(secs) * time.Second
-		}
-		return retryAfter, &APIError{StatusCode: resp.StatusCode, Message: readErrorMessage(resp.Body)}
+		return retry.After(resp.Header), &APIError{StatusCode: resp.StatusCode, Message: readErrorMessage(resp.Body)}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return 0, fmt.Errorf("failed to decode tumblebug response for GET %s: %w", path, err)

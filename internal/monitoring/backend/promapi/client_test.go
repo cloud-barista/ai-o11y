@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/retry"
 )
 
 // request is what the fake API saw.
@@ -42,7 +43,7 @@ func fakeAPI(t *testing.T, status int, body string) (*Client, *[]request) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	c.retryBase = time.Millisecond
+	c.retry = retry.Policy{MaxRetries: retry.DefaultMaxRetries, Base: time.Millisecond, MaxWait: time.Millisecond}
 	return c, &seen
 }
 
@@ -62,7 +63,7 @@ func TestInstant(t *testing.T) {
 	}
 	want := request{
 		method: "POST", path: "/api/v1/query", contentType: "application/x-www-form-urlencoded", header: "yes",
-		form: url.Values{"query": {`up{entity_id=~"k1|k2"}`}, "time": {"1700000000.5"}, "timeout": {"30s"}, "dedup": {"true"}},
+		form: url.Values{"query": {`up{entity_id=~"k1|k2"}`}, "time": {"1700000000.5"}, "timeout": {"30"}, "dedup": {"true"}},
 	}
 	if !reflect.DeepEqual((*seen)[0], want) {
 		t.Errorf("request = %+v\nwant %+v", (*seen)[0], want)
@@ -134,7 +135,7 @@ func TestRetryOnRateLimit(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if calls <= maxRetries {
+		if calls <= retry.DefaultMaxRetries {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -142,12 +143,12 @@ func TestRetryOnRateLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 	c, _ := NewClient(Config{BaseURL: srv.URL, Timeout: time.Second})
-	c.retryBase = time.Millisecond
+	c.retry = retry.Policy{MaxRetries: retry.DefaultMaxRetries, Base: time.Millisecond, MaxWait: time.Millisecond}
 	if _, err := c.Instant(context.Background(), "up", time.Time{}); err != nil {
-		t.Fatalf("Instant after %d 429s: %v", maxRetries, err)
+		t.Fatalf("Instant after %d 429s: %v", retry.DefaultMaxRetries, err)
 	}
-	if calls != maxRetries+1 {
-		t.Errorf("calls = %d, want %d", calls, maxRetries+1)
+	if calls != retry.DefaultMaxRetries+1 {
+		t.Errorf("calls = %d, want %d", calls, retry.DefaultMaxRetries+1)
 	}
 
 	calls = -100 // every answer is a 429 now
@@ -166,5 +167,18 @@ func TestSeries(t *testing.T) {
 	}
 	if (*seen)[0].path != "/api/v1/series" || (*seen)[0].form.Get("match[]") != `up{entity_id="k1"}` {
 		t.Errorf("request = %+v", (*seen)[0])
+	}
+}
+
+// TestTimeoutInSeconds: Prometheus reads a float number of seconds, not Go's
+// duration text ("1.5s" does not parse there).
+func TestTimeoutInSeconds(t *testing.T) {
+	c, seen := fakeAPI(t, 200, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	c.cfg.Timeout = 1500 * time.Millisecond
+	if _, err := c.Instant(context.Background(), "up", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := (*seen)[0].form.Get("timeout"); got != "1.5" {
+		t.Errorf("timeout = %q, want 1.5", got)
 	}
 }

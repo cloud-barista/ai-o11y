@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/retry"
 )
 
 const nodePath = "/tumblebug/ns/ns01/infra/infra01/node/node01"
@@ -79,29 +80,29 @@ func rateLimited(t *testing.T, n int) (*Source, *int) {
 	}))
 	t.Cleanup(srv.Close)
 	s := newTestSource(srv.URL)
-	s.client.retryBase = time.Millisecond
+	s.client.retry = retry.Policy{MaxRetries: retry.DefaultMaxRetries, Base: time.Millisecond, MaxWait: time.Millisecond}
 	return s, &calls
 }
 
 func TestRetryOnRateLimit(t *testing.T) {
-	s, calls := rateLimited(t, maxRetries)
+	s, calls := rateLimited(t, retry.DefaultMaxRetries)
 	got, err := s.Exists(context.Background(), listedNode())
 	if err != nil || !got {
-		t.Fatalf("Exists after %d 429s = %v, %v; want true", maxRetries, got, err)
+		t.Fatalf("Exists after %d 429s = %v, %v; want true", retry.DefaultMaxRetries, got, err)
 	}
-	if *calls != maxRetries+1 {
-		t.Errorf("calls = %d, want %d", *calls, maxRetries+1)
+	if *calls != retry.DefaultMaxRetries+1 {
+		t.Errorf("calls = %d, want %d", *calls, retry.DefaultMaxRetries+1)
 	}
 }
 
 func TestRetryGivesUp(t *testing.T) {
-	s, calls := rateLimited(t, maxRetries+1)
+	s, calls := rateLimited(t, retry.DefaultMaxRetries+1)
 	_, err := s.Exists(context.Background(), listedNode())
 	if StatusCode(err) != http.StatusTooManyRequests || !strings.Contains(err.Error(), "rate limit") {
 		t.Fatalf("err = %v, want the last 429", err)
 	}
-	if *calls != maxRetries+1 {
-		t.Errorf("calls = %d, want %d", *calls, maxRetries+1)
+	if *calls != retry.DefaultMaxRetries+1 {
+		t.Errorf("calls = %d, want %d", *calls, retry.DefaultMaxRetries+1)
 	}
 }
 
