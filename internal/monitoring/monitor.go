@@ -162,8 +162,6 @@ type MetricRow struct {
 	// is reporting from. A query with FillZero takes the metric as 0 where it
 	// is missing and this is present.
 	ZeroFill map[string]string
-	// Approx marks an expression that only approximates the current field.
-	Approx bool
 	// Gap says why no collector produces the metric yet. A row with a gap has
 	// no Exprs; it stays in the catalog so the gap is visible.
 	Gap string

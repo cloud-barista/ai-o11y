@@ -220,28 +220,28 @@ func diskioRows() []monitoring.MetricRow {
 	}
 	const ops, io, opTime, ioTime = "system_disk_operations_total", "system_disk_io_bytes_total",
 		"system_disk_operation_time_seconds_total", "system_disk_io_time_seconds_total"
-	row := func(name, unit, desc, expr string, approx bool) monitoring.MetricRow {
+	row := func(name, unit, desc, expr string) monitoring.MetricRow {
 		return monitoring.MetricRow{
 			Name: "host.disk." + name, Area: "diskio", Unit: unit, Kind: monitoring.KindRate,
-			Description: desc, Exprs: hm(expr), Dimension: "device", Approx: approx,
+			Description: desc, Exprs: hm(expr), Dimension: "device",
 		}
 	}
 	return []monitoring.MetricRow{
-		row("reads", "ops/s", "Completed reads (diskio.reads)", rate(ops, "read"), false),
-		row("writes", "ops/s", "Completed writes (diskio.writes)", rate(ops, "write"), false),
-		row("read_bytes", "bytes/s", "Bytes read (diskio.read_bytes)", rate(io, "read"), false),
-		row("write_bytes", "bytes/s", "Bytes written (diskio.write_bytes)", rate(io, "write"), false),
-		row("read_time", "s/s", "Time spent reading (diskio.read_time)", rate(opTime, "read"), false),
-		row("write_time", "s/s", "Time spent writing (diskio.write_time)", rate(opTime, "write"), false),
-		row("io_time", "s/s", "Time the device was busy (diskio.io_time)", rate(ioTime, ""), false),
+		row("reads", "ops/s", "Completed reads (diskio.reads)", rate(ops, "read")),
+		row("writes", "ops/s", "Completed writes (diskio.writes)", rate(ops, "write")),
+		row("read_bytes", "bytes/s", "Bytes read (diskio.read_bytes)", rate(io, "read")),
+		row("write_bytes", "bytes/s", "Bytes written (diskio.write_bytes)", rate(io, "write")),
+		row("read_time", "s/s", "Time spent reading (diskio.read_time)", rate(opTime, "read")),
+		row("write_time", "s/s", "Time spent writing (diskio.write_time)", rate(opTime, "write")),
+		row("io_time", "s/s", "Time the device was busy (diskio.io_time)", rate(ioTime, "")),
 		{
 			Name: "host.disk.pending_operations", Area: "diskio", Unit: "operations", Kind: monitoring.KindGauge,
 			Description: "I/O in progress (diskio.iops_in_progress)",
 			Exprs:       hm(`sum by (entity_id, device) (system_disk_pending_operations{$sel})`), Dimension: "device",
 		},
-		row("utilization", "ratio", "Busy share of the device (diskio.io_util)", rate(ioTime, ""), true),
-		row("await", "s", "Average time per I/O, queueing included (diskio.io_await)", rate(opTime, "")+" / "+rate(ops, ""), true),
-		row("svctm", "s", "Average service time per I/O (diskio.io_svctm)", rate(ioTime, "")+" / "+rate(ops, ""), true),
+		row("utilization", "ratio", "Busy share of the device (diskio.io_util)", rate(ioTime, "")),
+		row("await", "s", "Average time per I/O, queueing included (diskio.io_await)", rate(opTime, "")+" / "+rate(ops, "")),
+		row("svctm", "s", "Average service time per I/O (diskio.io_svctm)", rate(ioTime, "")+" / "+rate(ops, "")),
 	}
 }
 
