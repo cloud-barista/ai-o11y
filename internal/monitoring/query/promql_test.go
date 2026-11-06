@@ -98,6 +98,26 @@ func TestRenderCurrentScreens(t *testing.T) {
 	}
 }
 
+// TestRenderRateRangeFollowsStep: a graph's rate covers one graph interval,
+// as the current screens derive each counter from one interval to the next,
+// but never less than two collection intervals.
+func TestRenderRateRangeFollowsStep(t *testing.T) {
+	r := testRenderer(t)
+	for step, want := range map[time.Duration]string{
+		30 * time.Second: "1m",
+		time.Minute:      "1m",
+		10 * time.Minute: "10m",
+	} {
+		got, err := r.Render(monitoring.QuerySpec{Metric: "host.cpu.utilization", Targets: targets("a"), Step: step})
+		if err != nil {
+			t.Fatalf("Render step %v: %v", step, err)
+		}
+		if w := cpuUtil(`entity_id="a"`, want); got != w {
+			t.Errorf("step %v:\n got %s\nwant %s", step, got, w)
+		}
+	}
+}
+
 // TestRenderTopKTwoStage covers the graph of the top series (GPU dashboard
 // top 5): the series are ranked over the whole graph range, as the current
 // screen ranks by the same window it draws, and then drawn.
@@ -138,10 +158,10 @@ func TestRenderWindow(t *testing.T) {
 		window monitoring.Agg
 		want   string
 	}{
-		"rate current value": {"host.cpu.utilization", monitoring.Agg{}, cpuUtil(`entity_id="a"`, "2m")},
+		"rate current value": {"host.cpu.utilization", monitoring.Agg{}, cpuUtil(`entity_id="a"`, "1m")},
 		"rate peak goes through a subquery": {
 			"host.cpu.utilization", monitoring.Agg{Fn: monitoring.AggMax, Range: time.Hour},
-			`max_over_time((` + cpuUtil(`entity_id="a"`, "2m") + `)[1h:30s])`,
+			`max_over_time((` + cpuUtil(`entity_id="a"`, "1m") + `)[1h:30s])`,
 		},
 		"gauge current value": {
 			"host.memory.utilization", monitoring.Agg{},

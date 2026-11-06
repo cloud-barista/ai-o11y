@@ -20,10 +20,9 @@ import (
 // subquery sees each sample about once.
 const DefaultResolution = 30 * time.Second
 
-// DefaultRateRange is the window a rate expression gets when the query does
-// not set one: four collection intervals, so rate still has two samples when
-// one scrape is missed.
-const DefaultRateRange = 2 * time.Minute
+// MinRateRange is the shortest window a rate expression gets: two collection
+// intervals, so rate has two samples.
+const MinRateRange = time.Minute
 
 // ErrTwoStage is returned by Render for a top-k that one query cannot
 // express; see TwoStage. Pick the series with RenderTopK as an instant query
@@ -43,8 +42,11 @@ type PromQL struct {
 	Catalog monitoring.MetricCatalog
 	// Resolution is the subquery step; zero means DefaultResolution.
 	Resolution time.Duration
-	// RateRange is the window of a rate expression the query does not set;
-	// zero means DefaultRateRange.
+	// RateRange is the window of a rate expression the query does not set.
+	// Zero takes the graph's step, at least MinRateRange, the way the current
+	// screens take each counter's change from one graph interval to the next
+	// (non_negative_derivative over GROUP BY time(interval)); an instant query
+	// gets MinRateRange.
 	RateRange time.Duration
 }
 
@@ -125,7 +127,7 @@ func (r PromQL) perTarget(q monitoring.QuerySpec) (string, error) {
 		return "", err
 	}
 
-	expr, err := r.window(row, tmpl, sel, q.Window)
+	expr, err := r.window(row, tmpl, sel, q.Window, q.Step)
 	if err != nil {
 		return "", err
 	}
@@ -142,10 +144,10 @@ func (r PromQL) perTarget(q monitoring.QuerySpec) (string, error) {
 // since rate is already the average over its range. Anything else goes through
 // a subquery: the expression evaluated every Resolution over the window, then
 // aggregated.
-func (r PromQL) window(row monitoring.MetricRow, tmpl, sel string, w monitoring.Agg) (string, error) {
+func (r PromQL) window(row monitoring.MetricRow, tmpl, sel string, w monitoring.Agg, graphStep time.Duration) (string, error) {
 	rateRange := r.RateRange
 	if rateRange <= 0 {
-		rateRange = DefaultRateRange
+		rateRange = max(graphStep, MinRateRange)
 	}
 	fill := func(rng time.Duration) string {
 		return strings.NewReplacer(
