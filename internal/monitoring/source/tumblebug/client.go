@@ -193,7 +193,8 @@ type node struct {
 		AcceleratorCount int    `json:"acceleratorCount"`
 	} `json:"spec"`
 	Image struct {
-		OSType string `json:"osType"`
+		OSType         string `json:"osType"`
+		OSDistribution string `json:"osDistribution"`
 	} `json:"image"`
 }
 

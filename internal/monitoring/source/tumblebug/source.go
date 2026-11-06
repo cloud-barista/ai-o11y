@@ -144,7 +144,7 @@ func toTarget(nsID string, n node) monitoring.Target {
 		Name:     n.Name,
 		Provider: n.ConnectionConfig.ProviderName,
 		Region:   n.Region.Region,
-		OS:       osFamily(n.Image.OSType),
+		OS:       osFamily(n.Image.OSType, n.Image.OSDistribution),
 		Extra: map[string]string{
 			ExtraNamespace: nsID,
 			ExtraInfra:     n.InfraID,
@@ -171,14 +171,18 @@ func toTarget(nsID string, n node) monitoring.Target {
 	return t
 }
 
-// osFamily reduces CB-Tumblebug's free-form osType, such as "ubuntu 22.04",
-// to a family. NodeInfo carries no platform field, so any osType naming
-// Windows is "windows" and any other non-empty one is "linux".
-func osFamily(osType string) string {
+// osFamily reduces the image of a node to a family. NodeInfo.image carries no
+// platform field (CB-Tumblebug keeps osPlatform on the image resource only), so
+// the node is "windows" when its osType, such as "Windows 2022", or its
+// osDistribution, the CSP's own text, names Windows, as mc-observability
+// decides; it is "linux" when either is set otherwise, and unknown ("") when
+// both are empty.
+func osFamily(osType, osDistribution string) string {
 	switch {
-	case osType == "":
+	case osType == "" && osDistribution == "":
 		return ""
-	case strings.Contains(strings.ToLower(osType), "windows"):
+	case strings.Contains(strings.ToLower(osType), "windows"),
+		strings.Contains(strings.ToLower(osDistribution), "windows"):
 		return "windows"
 	default:
 		return "linux"

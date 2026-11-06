@@ -139,15 +139,19 @@ func TestKeyField(t *testing.T) {
 }
 
 func TestOSFamily(t *testing.T) {
-	for in, want := range map[string]string{
-		"":                    "",
-		"ubuntu 22.04":        "linux",
-		"rocky 9":             "linux",
-		"Windows Server 2022": "windows",
-		"windows 2019":        "windows",
+	for in, want := range map[[2]string]string{
+		{"", ""}:                     "",
+		{"ubuntu 22.04", ""}:         "linux",
+		{"rocky 9", "Rocky Linux 9"}: "linux",
+		{"Windows 2022", ""}:         "windows",
+		{"windows 2019", ""}:         "windows",
+		// osType is empty when no CB-Tumblebug extraction pattern matched.
+		{"", "Windows Server 2022 Datacenter"}: "windows",
+		{"", "Ubuntu 22.04"}:                   "linux",
+		{"ubuntu 22.04", "Microsoft Windows"}:  "windows",
 	} {
-		if got := osFamily(in); got != want {
-			t.Errorf("osFamily(%q) = %q, want %q", in, got, want)
+		if got := osFamily(in[0], in[1]); got != want {
+			t.Errorf("osFamily(%q, %q) = %q, want %q", in[0], in[1], got, want)
 		}
 	}
 }
