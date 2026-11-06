@@ -21,14 +21,14 @@ const ProviderName = "tumblebug"
 const KeyField = "NodeInfo.Uid"
 
 // ScopeNamespace narrows a listing to one CB-Tumblebug namespace.
-const ScopeNamespace = "namespace"
+const ScopeNamespace = ExtraNamespace
 
 // KindVM is the kind of every target this adapter lists.
 const KindVM = "vm"
 
 // Keys of Target.Extra this adapter fills.
 const (
-	ExtraNamespace     = "namespace"
+	ExtraNamespace     = "nsId"
 	ExtraInfra         = "infraId"
 	ExtraNode          = "nodeId"
 	ExtraConnection    = "connectionName"
@@ -69,7 +69,7 @@ func (s *Source) List(ctx context.Context, scope monitoring.Scope) ([]monitoring
 		for _, n := range nodes {
 			t := toTarget(nsID, n)
 			if err := t.Validate(); err != nil {
-				log.Warn().Str("namespace", nsID).Str("infraId", n.InfraID).Str("nodeId", n.ID).
+				log.Warn().Str("nsId", nsID).Str("infraId", n.InfraID).Str("nodeId", n.ID).
 					Err(err).Msg("Skipping CB-Tumblebug node")
 				continue
 			}
@@ -106,6 +106,33 @@ func (s *Source) Exists(ctx context.Context, t monitoring.Target) (bool, error) 
 	}
 	return n.UID == t.EntityID, nil
 }
+
+// Fetch implements monitoring.TargetSource: ref holds the node's nsId,
+// infraId and nodeId.
+func (s *Source) Fetch(ctx context.Context, ref map[string]string) (monitoring.Target, error) {
+	nsID, infraID, nodeID := ref[ExtraNamespace], ref[ExtraInfra], ref[ExtraNode]
+	if nsID == "" || infraID == "" || nodeID == "" {
+		return monitoring.Target{}, fmt.Errorf("%w: %s, %s and %s are all needed", ErrBadRef, ExtraNamespace, ExtraInfra, ExtraNode)
+	}
+	n, err := s.client.getNode(ctx, nsID, infraID, nodeID)
+	if err != nil {
+		if nodeGone(err) {
+			return monitoring.Target{}, fmt.Errorf("node %s/%s/%s: %w", nsID, infraID, nodeID, monitoring.ErrTargetNotFound)
+		}
+		return monitoring.Target{}, fmt.Errorf("failed to get node %s/%s/%s: %w", nsID, infraID, nodeID, err)
+	}
+	if n.InfraID == "" {
+		n.InfraID = infraID
+	}
+	t := toTarget(nsID, n)
+	if err := t.Validate(); err != nil {
+		return monitoring.Target{}, fmt.Errorf("node %s/%s/%s: %w", nsID, infraID, nodeID, err)
+	}
+	return t, nil
+}
+
+// ErrBadRef is returned by Fetch for a reference missing a name.
+var ErrBadRef = errors.New("incomplete node reference")
 
 func nodeGone(err error) bool {
 	var apiErr *APIError

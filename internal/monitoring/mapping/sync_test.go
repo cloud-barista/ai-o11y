@@ -25,6 +25,10 @@ func (s *syncSource) List(context.Context, monitoring.Scope) ([]monitoring.Targe
 	return s.listed, s.listErr
 }
 
+func (*syncSource) Fetch(context.Context, map[string]string) (monitoring.Target, error) {
+	return monitoring.Target{}, monitoring.ErrTargetNotFound
+}
+
 func (s *syncSource) Exists(_ context.Context, t monitoring.Target) (bool, error) {
 	s.checked = append(s.checked, t.EntityID)
 	if err := s.checkErr[t.EntityID]; err != nil {

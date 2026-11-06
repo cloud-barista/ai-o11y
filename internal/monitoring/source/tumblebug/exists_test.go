@@ -2,6 +2,7 @@ package tumblebug
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,5 +102,41 @@ func TestRetryGivesUp(t *testing.T) {
 	}
 	if *calls != maxRetries+1 {
 		t.Errorf("calls = %d, want %d", *calls, maxRetries+1)
+	}
+}
+
+func TestFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case nodePath:
+			_, _ = w.Write([]byte(`{"id":"node01","uid":"d44ikdomt0tac4ejrmmg","name":"web-1",
+				"connectionConfig":{"providerName":"aws"},"region":{"region":"ap-northeast-2"},
+				"spec":{"acceleratorType":"gpu","acceleratorModel":"T4","acceleratorCount":1},
+				"image":{"osType":"ubuntu 22.04"}}`))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"message":"no Node found (ID: x)"}`))
+		}
+	}))
+	defer srv.Close()
+	s := newTestSource(srv.URL)
+	ref := map[string]string{ExtraNamespace: "ns01", ExtraInfra: "infra01", ExtraNode: "node01"}
+
+	got, err := s.Fetch(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if got.EntityID != "d44ikdomt0tac4ejrmmg" || got.Name != "web-1" || got.OS != "linux" || got.GPUCount != 1 ||
+		got.Extra[ExtraNamespace] != "ns01" || got.Extra[ExtraInfra] != "infra01" || got.Extra[ExtraNode] != "node01" {
+		t.Errorf("Fetch = %+v", got)
+	}
+
+	ref[ExtraNode] = "gone"
+	if _, err := s.Fetch(context.Background(), ref); !errors.Is(err, monitoring.ErrTargetNotFound) {
+		t.Errorf("Fetch of a missing node = %v, want ErrTargetNotFound", err)
+	}
+	delete(ref, ExtraInfra)
+	if _, err := s.Fetch(context.Background(), ref); !errors.Is(err, ErrBadRef) {
+		t.Errorf("Fetch without infraId = %v, want ErrBadRef", err)
 	}
 }

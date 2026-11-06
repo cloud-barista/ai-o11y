@@ -110,7 +110,7 @@ func (s *Store) Lookup(ctx context.Context, key string) (monitoring.Target, erro
 		return monitoring.Target{}, err
 	}
 	if len(targets) == 0 {
-		return monitoring.Target{}, fmt.Errorf("unknown target %q", key)
+		return monitoring.Target{}, fmt.Errorf("target %q: %w", key, monitoring.ErrTargetNotFound)
 	}
 	return targets[0], nil
 }

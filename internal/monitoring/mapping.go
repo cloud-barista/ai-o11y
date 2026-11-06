@@ -2,8 +2,12 @@ package monitoring
 
 import (
 	"context"
+	"errors"
 	"strconv"
 )
+
+// ErrTargetNotFound is returned, wrapped, for a target that is not there.
+var ErrTargetNotFound = errors.New("target not found")
 
 // Mapper is the mapping layer. It follows the management platform's own keys
 // and attributes, so monitoring adapts to whichever platform a deployment runs

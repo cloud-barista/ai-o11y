@@ -73,6 +73,10 @@ type TargetSource interface {
 	// when the platform answers that t is gone; any other failure is an
 	// error, so a caller never drops a target it could not check.
 	Exists(ctx context.Context, t Target) (bool, error)
+	// Fetch returns the one target ref names in the platform's own terms,
+	// such as CB-Tumblebug's nsId, infraId and nodeId. It is how a target is
+	// described when only its platform names are known.
+	Fetch(ctx context.Context, ref map[string]string) (Target, error)
 }
 
 // Path is how samples are collected.
