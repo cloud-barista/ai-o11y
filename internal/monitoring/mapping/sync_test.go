@@ -58,7 +58,7 @@ func TestSync(t *testing.T) {
 	want := SyncResult{
 		Updated: []string{"k1"},
 		Deleted: []string{"k2"},
-		Kept:    map[string]string{"k3": "tumblebug responded 500: failed to get GetNodeObject"},
+		Kept:    map[string]string{"k3": "the platform could not be asked whether it still has it"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Sync = %+v, want %+v", got, want)

@@ -38,11 +38,14 @@ type ThanosConfig struct {
 // the database out: the service starts, but nothing that needs the target
 // table is available.
 type DBConfig struct {
-	Host     string
-	Port     int
-	Name     string
-	User     string
-	Password string
+	Host           string
+	Port           int
+	Name           string
+	User           string
+	Password       string
+	ConnectTimeout time.Duration
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
 }
 
 // TumblebugConfig is where CB-Tumblebug is reached. An empty BaseURL leaves the
@@ -79,6 +82,9 @@ func Load() (*Config, error) {
 	v.SetDefault("tumblebug.timeout", 2*time.Minute)
 	v.SetDefault("db.port", 3306)
 	v.SetDefault("db.name", "aio11y")
+	v.SetDefault("db.connect_timeout", 5*time.Second)
+	v.SetDefault("db.read_timeout", 30*time.Second)
+	v.SetDefault("db.write_timeout", 30*time.Second)
 	v.SetDefault("thanos.partial_response", false)
 	v.SetDefault("thanos.timeout", 2*time.Minute)
 
@@ -96,6 +102,9 @@ func Load() (*Config, error) {
 		"db.name",
 		"db.user",
 		"db.password",
+		"db.connect_timeout",
+		"db.read_timeout",
+		"db.write_timeout",
 		"thanos.query_url",
 		"thanos.write_url",
 		"thanos.partial_response",
@@ -117,11 +126,14 @@ func Load() (*Config, error) {
 			Timeout:          v.GetDuration("tumblebug.timeout"),
 		},
 		DB: DBConfig{
-			Host:     v.GetString("db.host"),
-			Port:     v.GetInt("db.port"),
-			Name:     v.GetString("db.name"),
-			User:     v.GetString("db.user"),
-			Password: v.GetString("db.password"),
+			Host:           v.GetString("db.host"),
+			Port:           v.GetInt("db.port"),
+			Name:           v.GetString("db.name"),
+			User:           v.GetString("db.user"),
+			Password:       v.GetString("db.password"),
+			ConnectTimeout: v.GetDuration("db.connect_timeout"),
+			ReadTimeout:    v.GetDuration("db.read_timeout"),
+			WriteTimeout:   v.GetDuration("db.write_timeout"),
 		},
 		Thanos: ThanosConfig{
 			QueryURL:        strings.TrimRight(v.GetString("thanos.query_url"), "/"),

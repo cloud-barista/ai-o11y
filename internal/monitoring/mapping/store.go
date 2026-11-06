@@ -4,11 +4,13 @@ package mapping
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -37,6 +39,9 @@ func NewStore(db *gorm.DB, platform string) *Store {
 // for its key. The time it was first saved is kept.
 func (s *Store) Save(ctx context.Context, t monitoring.Target) error {
 	if err := t.Validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidTarget, err)
+	}
+	if err := fits(t); err != nil {
 		return err
 	}
 	now := s.now()
@@ -71,10 +76,47 @@ func (s *Store) Save(ctx context.Context, t monitoring.Target) error {
 func (s *Store) Delete(ctx context.Context, key string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("entity_id = ?", key).Delete(&attributeRow{}).Error; err != nil {
-			return err
+			return fmt.Errorf("failed to delete attributes of target %q: %w", key, err)
 		}
-		return tx.Where("entity_id = ?", key).Delete(&targetRow{}).Error
+		if err := tx.Where("entity_id = ?", key).Delete(&targetRow{}).Error; err != nil {
+			return fmt.Errorf("failed to delete target %q: %w", key, err)
+		}
+		return nil
 	})
+}
+
+// ErrInvalidTarget wraps a target the table cannot hold as it is.
+var ErrInvalidTarget = errors.New("invalid target")
+
+// Column sizes of the target table (db.go).
+const (
+	maxKey   = 64
+	maxShort = 32
+	maxMid   = 64
+	maxLong  = 255
+)
+
+// fits reports a field longer than its column, which the database would
+// refuse or cut, leaving a key that no longer finds its row.
+func fits(t monitoring.Target) error {
+	for _, f := range []struct {
+		name, value string
+		max         int
+	}{
+		{"key", t.EntityID, maxKey}, {"kind", t.Kind, maxShort}, {"os", t.OS, maxShort},
+		{"name", t.Name, maxLong}, {"provider", t.Provider, maxMid}, {"region", t.Region, maxMid},
+		{"gpuModel", t.GPUModel, maxLong},
+	} {
+		if utf8.RuneCountInString(f.value) > f.max {
+			return fmt.Errorf("%w: %s is longer than %d characters", ErrInvalidTarget, f.name, f.max)
+		}
+	}
+	for k, v := range t.Extra {
+		if utf8.RuneCountInString(k) > maxKey || utf8.RuneCountInString(v) > maxLong {
+			return fmt.Errorf("%w: attribute %q is longer than %d characters or its value than %d", ErrInvalidTarget, k, maxKey, maxLong)
+		}
+	}
+	return nil
 }
 
 // Select implements monitoring.Mapper with the (attr, value) index: a target
@@ -119,8 +161,10 @@ func (s *Store) Lookup(ctx context.Context, key string) (monitoring.Target, erro
 // platform.
 func (s *Store) Keys(ctx context.Context) ([]string, error) {
 	var keys []string
-	err := s.db.WithContext(ctx).Model(&targetRow{}).Order("entity_id").Pluck("entity_id", &keys).Error
-	return keys, err
+	if err := s.db.WithContext(ctx).Model(&targetRow{}).Order("entity_id").Pluck("entity_id", &keys).Error; err != nil {
+		return nil, fmt.Errorf("failed to list target keys: %w", err)
+	}
+	return keys, nil
 }
 
 // load reads the targets with keys, in key order.

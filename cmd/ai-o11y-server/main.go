@@ -133,6 +133,7 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 	} else {
 		db, err := mapping.OpenDB(mapping.DBConfig{
 			Host: cfg.DB.Host, Port: cfg.DB.Port, Name: cfg.DB.Name, User: cfg.DB.User, Password: cfg.DB.Password,
+			ConnectTimeout: cfg.DB.ConnectTimeout, ReadTimeout: cfg.DB.ReadTimeout, WriteTimeout: cfg.DB.WriteTimeout,
 		})
 		if err != nil {
 			return rest.Deps{}, err

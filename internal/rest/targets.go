@@ -90,6 +90,10 @@ func (h *handler) RestPostTarget(c echo.Context) error {
 		}
 	}
 	if err := h.Targets.Save(ctx, t); err != nil {
+		if errors.Is(err, mapping.ErrInvalidTarget) {
+			log.Warn().Err(err).Str("targetId", t.EntityID).Msg("Target refused")
+			return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Target does not fit: uid up to 64 characters, names and attribute values up to 255"})
+		}
 		log.Error().Err(err).Str("targetId", t.EntityID).Msg("Failed to save target")
 		return c.JSON(http.StatusInternalServerError, model.SimpleMsg{Message: "Target registration failed"})
 	}

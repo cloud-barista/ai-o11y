@@ -20,6 +20,27 @@ type DBConfig struct {
 	Name     string
 	User     string
 	Password string
+	// ConnectTimeout, ReadTimeout and WriteTimeout bound one connection
+	// attempt and each read and write on a connection, so an unresponsive
+	// database fails a request instead of holding it. Zero takes the
+	// Default ones.
+	ConnectTimeout time.Duration
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+}
+
+// Default database timeouts.
+const (
+	DefaultConnectTimeout = 5 * time.Second
+	DefaultReadTimeout    = 30 * time.Second
+	DefaultWriteTimeout   = 30 * time.Second
+)
+
+func orDefault(d, def time.Duration) time.Duration {
+	if d <= 0 {
+		return def
+	}
+	return d
 }
 
 // dsn builds the driver connection string. It goes through the driver's own
@@ -34,6 +55,9 @@ func (c DBConfig) dsn() string {
 	cfg.ParseTime = true
 	cfg.Loc = time.UTC
 	cfg.Params = map[string]string{"charset": "utf8mb4"}
+	cfg.Timeout = orDefault(c.ConnectTimeout, DefaultConnectTimeout)
+	cfg.ReadTimeout = orDefault(c.ReadTimeout, DefaultReadTimeout)
+	cfg.WriteTimeout = orDefault(c.WriteTimeout, DefaultWriteTimeout)
 	return cfg.FormatDSN()
 }
 
