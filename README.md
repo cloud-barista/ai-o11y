@@ -65,9 +65,9 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
 
 ## Known limits
 
-- **Collector**: the rendered configuration leaves the collector's own
-  telemetry at its default port (8888); another collector on the same host
-  holding that port keeps it from starting.
+- **Collector**: the collector's own metrics are off by default
+  (`AIO11Y_COLLECTOR_TELEMETRY_PORT=0`) and nothing reads them yet; set a port
+  to serve them on localhost.
 - **GPU**: the GPU receiver reads `nvidia-smi` only. MIG and XID fields wait for
   an NVML source, GPUs of other vendors are not read, and a target's metric
   listing cannot tell which fields its particular GPU leaves empty.

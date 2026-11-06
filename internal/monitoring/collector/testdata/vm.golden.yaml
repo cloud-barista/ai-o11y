@@ -43,3 +43,6 @@ service:
                 - batch
             receivers:
                 - host_metrics
+    telemetry:
+        metrics:
+            level: none

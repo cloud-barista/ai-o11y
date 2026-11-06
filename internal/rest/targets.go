@@ -255,7 +255,7 @@ func (h *handler) RestGetTargetCollectorConfig(c echo.Context) error {
 	if !ok {
 		return err
 	}
-	out, err := collector.Render(t, h.Collectors, h.Catalog, h.Backend.WriteEndpoint())
+	out, err := collector.Render(t, h.Collectors, h.Catalog, h.Backend.WriteEndpoint(), h.CollectorOptions)
 	if err != nil {
 		log.Error().Err(err).Str("targetId", t.EntityID).Msg("Failed to render collector configuration")
 		return c.JSON(http.StatusInternalServerError, model.SimpleMsg{Message: "Collector configuration could not be built"})

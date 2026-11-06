@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/collector"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/mapping"
 )
 
@@ -31,6 +32,9 @@ type Deps struct {
 	Catalog    monitoring.MetricCatalog
 	Backend    monitoring.Backend
 	Collectors []monitoring.CollectorKind
+	// CollectorOptions are the deployment-wide settings of rendered collector
+	// configurations.
+	CollectorOptions collector.Options
 }
 
 // handler serves the monitoring routes.

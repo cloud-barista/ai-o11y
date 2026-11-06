@@ -47,3 +47,6 @@ service:
             receivers:
                 - host_metrics
                 - nvidia_gpu
+    telemetry:
+        metrics:
+            level: none

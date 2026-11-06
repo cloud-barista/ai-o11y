@@ -28,7 +28,7 @@ const ExporterOTLPHTTP = "otlp_http"
 // define the same component id are an error rather than one silently
 // replacing the other. The output is YAML with sorted keys, so the same
 // inputs always render the same bytes.
-func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.MetricCatalog, endpoint monitoring.Endpoint) ([]byte, error) {
+func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.MetricCatalog, endpoint monitoring.Endpoint, opts Options) ([]byte, error) {
 	if endpoint.URL == "" {
 		return nil, errors.New("collector endpoint has no URL")
 	}
@@ -82,6 +82,7 @@ func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.
 		"processors": processors,
 		"exporters":  map[string]any{ExporterOTLPHTTP: exporter},
 		"service": map[string]any{
+			"telemetry": telemetry(opts.TelemetryPort),
 			"pipelines": map[string]any{
 				"metrics": map[string]any{
 					"receivers":  slices.Sorted(maps.Keys(receivers)),
@@ -102,4 +103,26 @@ func mergeInto(dst, src map[string]any, kind string) error {
 		dst[id] = v
 	}
 	return nil
+}
+
+// Options are deployment-wide settings of the rendered configuration.
+type Options struct {
+	// TelemetryPort is the localhost port the collector serves its own
+	// metrics on (Prometheus format). Zero turns them off, so the collector
+	// opens no port another collector on the host may already hold; nothing
+	// reads them yet.
+	TelemetryPort int
+}
+
+// telemetry is the collector's own telemetry section.
+func telemetry(port int) map[string]any {
+	if port <= 0 {
+		return map[string]any{"metrics": map[string]any{"level": "none"}}
+	}
+	return map[string]any{"metrics": map[string]any{
+		"level": "basic",
+		"readers": []any{map[string]any{"pull": map[string]any{"exporter": map[string]any{
+			"prometheus": map[string]any{"host": "127.0.0.1", "port": port},
+		}}}},
+	}}
 }

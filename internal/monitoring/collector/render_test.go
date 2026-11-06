@@ -60,7 +60,7 @@ func checkGolden(t *testing.T, name string, got []byte) {
 // TestRenderSnapshot pins the whole collector configuration for a VM. Run with
 // -update to rewrite after a deliberate change.
 func TestRenderSnapshot(t *testing.T) {
-	got, err := Render(vm(), kinds, builtin(t), endpoint)
+	got, err := Render(vm(), kinds, builtin(t), endpoint, Options{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -70,12 +70,12 @@ func TestRenderSnapshot(t *testing.T) {
 func TestRenderIsDeterministic(t *testing.T) {
 	c := builtin(t)
 	target := vm()
-	first, err := Render(target, kinds, c, endpoint)
+	first, err := Render(target, kinds, c, endpoint, Options{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 	for range 20 {
-		next, err := Render(target, kinds, c, endpoint)
+		next, err := Render(target, kinds, c, endpoint, Options{})
 		if err != nil {
 			t.Fatalf("Render: %v", err)
 		}
@@ -90,7 +90,7 @@ func TestRenderProcessorOrder(t *testing.T) {
 		Receivers:  map[string]any{"otlp": map[string]any{}},
 		Processors: map[string]any{"zzz": map[string]any{}},
 	}}
-	got, err := Render(vm(), []monitoring.CollectorKind{extra}, builtin(t), endpoint)
+	got, err := Render(vm(), []monitoring.CollectorKind{extra}, builtin(t), endpoint, Options{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestRenderRejects(t *testing.T) {
 		"identity clashes":   {vm(), []monitoring.CollectorKind{Hostmetrics{}, fixedKind{frag: monitoring.ConfigFragment{Processors: map[string]any{monitoring.IdentityProcessor: nil}}}}, endpoint},
 	}
 	for name, tc := range cases {
-		if _, err := Render(tc.target, tc.kinds, c, tc.endpoint); err == nil {
+		if _, err := Render(tc.target, tc.kinds, c, tc.endpoint, Options{}); err == nil {
 			t.Errorf("%s: Render succeeded", name)
 		}
 	}
@@ -181,7 +181,7 @@ func gpuVM() monitoring.Target {
 // TestRenderGPUSnapshot is a VM with GPUs: the NVIDIA GPU receiver joins
 // hostmetrics in the one metrics pipeline.
 func TestRenderGPUSnapshot(t *testing.T) {
-	got, err := Render(gpuVM(), kinds, builtin(t), endpoint)
+	got, err := Render(gpuVM(), kinds, builtin(t), endpoint, Options{})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -206,5 +206,24 @@ func TestNvidiaGPUAppliesTo(t *testing.T) {
 		if got := (NvidiaGPU{}).AppliesTo(target); got != tc.want {
 			t.Errorf("%s: AppliesTo = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// TestRenderTelemetry: the collector's own metrics are off by default, so it
+// opens no port; a port turns them on, on localhost.
+func TestRenderTelemetry(t *testing.T) {
+	off, err := Render(vm(), kinds, builtin(t), endpoint, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(off), "level: none") || strings.Contains(string(off), "port:") {
+		t.Errorf("default telemetry:\n%s", off)
+	}
+	on, err := Render(vm(), kinds, builtin(t), endpoint, Options{TelemetryPort: 18889})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(on), "port: 18889") || !strings.Contains(string(on), "host: 127.0.0.1") {
+		t.Errorf("telemetry on a port:\n%s", on)
 	}
 }

@@ -18,6 +18,14 @@ type Config struct {
 	Tumblebug TumblebugConfig
 	DB        DBConfig
 	Thanos    ThanosConfig
+	Collector CollectorConfig
+}
+
+// CollectorConfig is about the collector configurations ai-o11y renders.
+type CollectorConfig struct {
+	// TelemetryPort is the localhost port collectors serve their own metrics
+	// on; 0 turns them off.
+	TelemetryPort int
 }
 
 // ThanosConfig is the metrics backend. An empty QueryURL leaves queries and
@@ -109,6 +117,7 @@ func Load() (*Config, error) {
 		"thanos.write_url",
 		"thanos.partial_response",
 		"thanos.timeout",
+		"collector.telemetry_port",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("failed to bind env for %q: %w", key, err)
@@ -135,6 +144,7 @@ func Load() (*Config, error) {
 			ReadTimeout:    v.GetDuration("db.read_timeout"),
 			WriteTimeout:   v.GetDuration("db.write_timeout"),
 		},
+		Collector: CollectorConfig{TelemetryPort: v.GetInt("collector.telemetry_port")},
 		Thanos: ThanosConfig{
 			QueryURL:        strings.TrimRight(v.GetString("thanos.query_url"), "/"),
 			WriteURL:        v.GetString("thanos.write_url"),
@@ -144,6 +154,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)
+	}
+	if cfg.Collector.TelemetryPort < 0 || cfg.Collector.TelemetryPort > 65535 {
+		return nil, fmt.Errorf("%s_COLLECTOR_TELEMETRY_PORT must be between 0 and 65535, got %d", envPrefix, cfg.Collector.TelemetryPort)
 	}
 	if cfg.DB.Host != "" && (cfg.DB.Port <= 0 || cfg.DB.Port > 65535) {
 		return nil, fmt.Errorf("%s_DB_PORT must be between 1 and 65535, got %d", envPrefix, cfg.DB.Port)
