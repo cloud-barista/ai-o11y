@@ -31,7 +31,7 @@ func vm() monitoring.Target {
 		Provider: "aws",
 		Region:   "ap-northeast-2",
 		OS:       "linux",
-		Extra:    map[string]string{"namespace": "ns01"},
+		Extra:    map[string]string{"nsId": "ns01"},
 	}
 }
 

@@ -18,7 +18,7 @@ func identityTarget() Target {
 		Name:     "web-1",
 		Provider: "aws",
 		Region:   "ap-northeast-2",
-		Extra:    map[string]string{"namespace": "ns01"},
+		Extra:    map[string]string{"nsId": "ns01"},
 	}
 }
 
