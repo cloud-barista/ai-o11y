@@ -116,7 +116,7 @@ func testRenderer(t *testing.T) PromQL {
 	rows := append(catalog.Builtin(), monitoring.MetricRow{
 		Name: "test.gpu.utilization", Area: "gpu", Unit: "ratio", Kind: monitoring.KindGauge,
 		Dimension: "uuid", DimensionName: "gpu.uuid",
-		Exprs: map[string]string{catalog.CollectorGPU: `max by (entity_id, uuid) (nvidia_smi_utilization_gpu_ratio{$sel})`},
+		Exprs: map[string]string{catalog.CollectorNvidiaSMI: `max by (entity_id, uuid) (nvidia_smi_utilization_gpu_ratio{$sel})`},
 	})
 	c, err := catalog.New(rows)
 	if err != nil {

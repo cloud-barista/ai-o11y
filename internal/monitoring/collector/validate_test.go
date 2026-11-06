@@ -20,7 +20,7 @@ func TestRenderedConfigValidates(t *testing.T) {
 	}
 	windows := vm()
 	windows.OS = "windows"
-	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows} {
+	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM()} {
 		out, err := Render(target, kinds, builtin(t), endpoint)
 		if err != nil {
 			t.Fatalf("%s: Render: %v", name, err)

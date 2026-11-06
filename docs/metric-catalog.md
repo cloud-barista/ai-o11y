@@ -57,7 +57,7 @@ The default is off.
 
 ## Fields
 
-GPU fields are listed once the GPU receiver is in place.
+GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpureceiver`), which reads `nvidia-smi` and writes each query field as `nvidia_smi.<field>`. Within a target they are split by the GPU's UUID, `hw.id` for common fields and `uuid` for nvidia-smi's own.
 
 | Field | Schema | Unit | Attribute (values) | Dimension | Provided |
 |---|---|---|---|---|---|
@@ -94,6 +94,31 @@ GPU fields are listed once the GPU receiver is in place.
 | `system.process.count` | common | {process} | `process.state` (running, sleeping, stopped, defunct, blocked, idle) |  | yes |
 | `process.cpu.utilization` | common | 1 |  | `process.executable.name` | no: per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name) |
 | `process.memory.utilization` | common | 1 |  | `process.executable.name` | no: per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name) |
+| `hw.gpu.utilization` | common | 1 | `hw.gpu.task` (general, encoder, decoder) | `hw.id` | yes |
+| `hw.gpu.memory.usage` | common | By |  | `hw.id` | yes |
+| `hw.gpu.memory.limit` | common | By |  | `hw.id` | yes |
+| `hw.gpu.memory.utilization` | common | 1 |  | `hw.id` | yes |
+| `hw.power` | common | W |  | `hw.id` | yes |
+| `utilization.memory` | nvidia_smi | % |  | `uuid` | yes |
+| `temperature.gpu` | nvidia_smi | Cel |  | `uuid` | yes |
+| `temperature.memory` | nvidia_smi | Cel |  | `uuid` | yes |
+| `fan.speed` | nvidia_smi | % |  | `uuid` | yes |
+| `clocks.sm` | nvidia_smi | MHz |  | `uuid` | yes |
+| `clocks.mem` | nvidia_smi | MHz |  | `uuid` | yes |
+| `pstate` | nvidia_smi |  |  | `uuid` | yes |
+| `clocks_event_reasons.active` | nvidia_smi |  |  | `uuid` | yes |
+| `ecc.errors.corrected.volatile.total` | nvidia_smi | {error} |  | `uuid` | yes |
+| `ecc.errors.uncorrected.volatile.total` | nvidia_smi | {error} |  | `uuid` | yes |
+| `ecc.errors.corrected.aggregate.total` | nvidia_smi | {error} |  | `uuid` | yes |
+| `ecc.errors.uncorrected.aggregate.total` | nvidia_smi | {error} |  | `uuid` | yes |
+| `retired_pages.double_bit.count` | nvidia_smi | {page} |  | `uuid` | yes |
+| `retired_pages.pending` | nvidia_smi |  |  | `uuid` | yes |
+| `remapped_rows.correctable` | nvidia_smi | {row} |  | `uuid` | yes |
+| `remapped_rows.uncorrectable` | nvidia_smi | {row} |  | `uuid` | yes |
+| `remapped_rows.pending` | nvidia_smi |  |  | `uuid` | yes |
+| `remapped_rows.failure` | nvidia_smi |  |  | `uuid` | yes |
+| `mig.sm.utilization` | nvml | 1 |  |  | no: the GPU receiver has no NVML source yet; nvidia-smi does not report it |
+| `xid.errors` | nvml | {error} |  |  | no: the GPU receiver has no NVML source yet; nvidia-smi does not report it |
 
 ## Known limits
 
@@ -102,5 +127,7 @@ GPU fields are listed once the GPU receiver is in place.
 - The meaning of a common field follows OpenTelemetry. Where it differs from
   the fields shown by existing screens (for example, CPU user time with or
   without guest time), the difference is not reconciled yet.
+- The GPU receiver has only an `nvidia-smi` source: MIG and XID fields wait for
+  an NVML source, and GPUs of other vendors are not read.
 - Fields whose value only the existing screens compute, such as average I/O
   wait per operation, are not in the catalog yet.

@@ -122,7 +122,7 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 	}
 	deps := rest.Deps{
 		Catalog:    cat,
-		Collectors: []monitoring.CollectorKind{collector.Hostmetrics{}},
+		Collectors: []monitoring.CollectorKind{collector.Hostmetrics{}, collector.NvidiaGPU{}},
 	}
 	if src, err := sources.Get(tumblebug.ProviderName); err == nil {
 		deps.Source = src

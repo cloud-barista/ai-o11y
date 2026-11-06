@@ -87,3 +87,52 @@ func TestAttributeSplit(t *testing.T) {
 		t.Error("splitting by another field's attribute succeeded")
 	}
 }
+
+// TestGPUFields runs the GPU fields on series as the nvidia_gpu receiver's
+// nvidia-smi source writes them, after the OTLP translation.
+func TestGPUFields(t *testing.T) {
+	st := promqltest.LoadedStorage(t, `load 30s
+  nvidia_smi_utilization_gpu_percent{entity_id="a",uuid="GPU-1",index="0",name="T4"} 40x20
+  nvidia_smi_utilization_encoder_percent{entity_id="a",uuid="GPU-1",index="0",name="T4"} 10x20
+  nvidia_smi_utilization_decoder_percent{entity_id="a",uuid="GPU-1",index="0",name="T4"} 0x20
+  nvidia_smi_memory_used_mebibytes{entity_id="a",uuid="GPU-1",index="0",name="T4"} 1024x20
+  nvidia_smi_memory_total_mebibytes{entity_id="a",uuid="GPU-1",index="0",name="T4"} 4096x20
+  nvidia_smi_pstate{entity_id="a",uuid="GPU-1",index="0",name="T4"} 8x20
+`)
+	t.Cleanup(func() { _ = st.Close() })
+	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st,
+		at: time.Unix(0, 0).UTC().Add(10 * time.Minute)}
+	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 1}, Runner: runner}
+	one := func(q monitoring.QuerySpec, label string) map[string]float64 {
+		t.Helper()
+		q.Targets = targets("a")
+		got, err := p.Query(context.Background(), q)
+		if err != nil {
+			t.Fatalf("%s: %v", q.Metric, err)
+		}
+		out := map[string]float64{}
+		for _, s := range got {
+			if s.Labels["uuid"] != "GPU-1" {
+				t.Errorf("%s: series without the GPU's uuid: %v", q.Metric, s.Labels)
+			}
+			out[s.Labels[label]] = s.Points[len(s.Points)-1].V
+		}
+		return out
+	}
+	if got := one(monitoring.QuerySpec{Metric: "hw.gpu.utilization"}, ""); got[""] != 0.4 {
+		t.Errorf("utilization = %v, want 0.4", got)
+	}
+	tasks := one(monitoring.QuerySpec{Metric: "hw.gpu.utilization", SplitBy: []string{"hw.gpu.task"}}, "hw_gpu_task")
+	if tasks["general"] != 0.4 || tasks["encoder"] != 0.1 || tasks["decoder"] != 0 || len(tasks) != 3 {
+		t.Errorf("utilization by task = %v", tasks)
+	}
+	if got := one(monitoring.QuerySpec{Metric: "hw.gpu.memory.usage"}, ""); got[""] != 1024*1048576 {
+		t.Errorf("memory usage = %v, want bytes", got)
+	}
+	if got := one(monitoring.QuerySpec{Metric: "hw.gpu.memory.utilization"}, ""); got[""] != 0.25 {
+		t.Errorf("memory utilization = %v", got)
+	}
+	if got := one(monitoring.QuerySpec{Metric: "nvidia_smi:pstate"}, ""); got[""] != 8 {
+		t.Errorf("pstate = %v", got)
+	}
+}

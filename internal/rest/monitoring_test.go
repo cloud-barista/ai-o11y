@@ -97,7 +97,7 @@ func newTestServer(t *testing.T, deps Deps) *Server {
 		t.Fatalf("catalog: %v", err)
 	}
 	deps.Catalog = cat
-	deps.Collectors = []monitoring.CollectorKind{collector.Hostmetrics{}}
+	deps.Collectors = []monitoring.CollectorKind{collector.Hostmetrics{}, collector.NvidiaGPU{}}
 	return NewServer(&config.Config{Server: config.ServerConfig{Port: 8094}}, deps)
 }
 

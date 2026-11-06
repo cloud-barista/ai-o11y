@@ -36,7 +36,7 @@ func vm() monitoring.Target {
 }
 
 var (
-	kinds    = []monitoring.CollectorKind{Hostmetrics{}}
+	kinds    = []monitoring.CollectorKind{Hostmetrics{}, NvidiaGPU{}}
 	endpoint = monitoring.Endpoint{URL: "http://prometheus:9090/api/v1/otlp"}
 )
 
@@ -170,4 +170,40 @@ func (k fixedKind) Render(monitoring.Target, monitoring.MetricCatalog) (monitori
 }
 func (fixedKind) Health(context.Context, monitoring.Target) (monitoring.CollectorHealth, error) {
 	return monitoring.CollectorHealth{}, nil
+}
+
+func gpuVM() monitoring.Target {
+	t := vm()
+	t.GPUCount, t.GPUModel = 2, "NVIDIA A100-SXM4-80GB"
+	return t
+}
+
+// TestRenderGPUSnapshot is a VM with GPUs: the NVIDIA GPU receiver joins
+// hostmetrics in the one metrics pipeline.
+func TestRenderGPUSnapshot(t *testing.T) {
+	got, err := Render(gpuVM(), kinds, builtin(t), endpoint)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	checkGolden(t, "gpu-vm.golden.yaml", got)
+}
+
+func TestNvidiaGPUAppliesTo(t *testing.T) {
+	for name, tc := range map[string]struct {
+		count int
+		model string
+		want  bool
+	}{
+		"no gpu":        {0, "", false},
+		"nvidia":        {1, "NVIDIA T4", true},
+		"model unknown": {1, "", true},
+		"amd":           {1, "AMD Instinct MI300X", false},
+		"intel":         {1, "Intel Gaudi 2", false},
+	} {
+		target := vm()
+		target.GPUCount, target.GPUModel = tc.count, tc.model
+		if got := (NvidiaGPU{}).AppliesTo(target); got != tc.want {
+			t.Errorf("%s: AppliesTo = %v, want %v", name, got, tc.want)
+		}
+	}
 }
