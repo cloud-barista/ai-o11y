@@ -180,7 +180,7 @@ type MetricRow struct {
 	Dimension     string
 	DimensionName string
 	// Requires lists the capabilities a target needs to emit the metric, such
-	// as "os:linux" or "physicalGpuMetrics". A target without one reports the
+	// as "os:linux". A target without one reports the
 	// metric as unsupported rather than missing.
 	Requires []string
 	// Enables lists the collector metrics that are off by default and must be

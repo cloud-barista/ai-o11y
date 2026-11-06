@@ -38,12 +38,25 @@ type Planner struct {
 	Renderer PromQL
 	Limits   ChunkLimits
 	Runner   Runner
+	// Now is the time an instant query without End is evaluated at; nil
+	// means time.Now.
+	Now func() time.Time
 }
 
 // Query runs q.
 func (p Planner) Query(ctx context.Context, q monitoring.QuerySpec) ([]monitoring.Series, error) {
 	if p.Runner == nil {
 		return nil, errors.New("planner has no runner")
+	}
+	if q.Step == 0 && q.End.IsZero() {
+		// One time for every chunk: left to the backend, each chunk would be
+		// evaluated at its own "now", and points merged across chunks would
+		// not line up.
+		now := time.Now
+		if p.Now != nil {
+			now = p.Now
+		}
+		q.End = now().UTC()
 	}
 	if TwoStage(q) {
 		return p.twoStage(ctx, q)

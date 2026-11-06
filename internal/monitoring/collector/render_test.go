@@ -196,7 +196,8 @@ func TestNvidiaGPUAppliesTo(t *testing.T) {
 	}{
 		"no gpu":        {0, "", false},
 		"nvidia":        {1, "NVIDIA T4", true},
-		"model unknown": {1, "", true},
+		"model unknown": {1, "", false},
+		"tumblebug id":  {1, "nvidia-a100-80gb", true},
 		"amd":           {1, "AMD Instinct MI300X", false},
 		"intel":         {1, "Intel Gaudi 2", false},
 	} {

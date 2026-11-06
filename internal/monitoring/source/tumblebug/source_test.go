@@ -82,16 +82,15 @@ func TestListAllNamespaces(t *testing.T) {
 				ExtraNode:          "node01",
 				ExtraConnection:    "aws-ap-northeast-2",
 				ExtraZone:          "ap-northeast-2a",
-				ExtraCspResourceID: "i-0d6c7d2a0f4d0ba2a",
+				ExtraCSPResourceID: "i-0d6c7d2a0f4d0ba2a",
 				ExtraOSType:        "ubuntu 22.04",
 			},
 		},
 		{
-			// A node with only the fields it must have: the name falls back
-			// to the node id, and no GPU or OS is assumed.
+			// A node with only the fields it must have: no name, GPU or OS
+			// is made up for it.
 			EntityID: "c9nqt72b9s0d3f6qe2cg",
 			Kind:     KindVM,
-			Name:     "node09",
 			Extra: map[string]string{
 				ExtraNamespace: "ns02",
 				ExtraInfra:     "infra09",

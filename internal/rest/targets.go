@@ -46,11 +46,11 @@ func (h *handler) RestPostTarget(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Malformed request body: check JSON syntax"})
 	}
 	switch req.Kind {
-	case "", model.TargetKindNode:
+	case model.TargetKindNode:
 	case model.TargetKindK8s:
 		return c.JSON(http.StatusUnprocessableEntity, model.SimpleMsg{Message: "Kubernetes targets are not supported yet"})
 	default:
-		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "kind must be node"})
+		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "kind is required: node"})
 	}
 	if req.NsID == "" || req.InfraID == "" || req.NodeID == "" {
 		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "nsId, infraId and nodeId are required"})
@@ -62,7 +62,7 @@ func (h *handler) RestPostTarget(c echo.Context) error {
 	}
 
 	var t monitoring.Target
-	if req.Uid != "" {
+	if req.UID != "" {
 		t = targetFromReq(req)
 	} else {
 		if h.Source == nil {
@@ -81,7 +81,13 @@ func (h *handler) RestPostTarget(c echo.Context) error {
 				Msg("Failed to read the node from CB-Tumblebug")
 			return c.JSON(http.StatusBadGateway, model.SimpleMsg{Message: "Could not read the node from CB-Tumblebug"})
 		}
-		maps.Copy(t.Extra, req.Attributes)
+		// The platform's names stay what the platform reported: a sync looks
+		// the target up by them.
+		for k, v := range req.Attributes {
+			if _, platform := t.Extra[k]; !platform {
+				t.Extra[k] = v
+			}
+		}
 	}
 	if err := h.Targets.Save(ctx, t); err != nil {
 		log.Error().Err(err).Str("targetId", t.EntityID).Msg("Failed to save target")
@@ -99,12 +105,8 @@ func targetFromReq(req model.TargetReq) monitoring.Target {
 	extra[tumblebug.ExtraNamespace] = req.NsID
 	extra[tumblebug.ExtraInfra] = req.InfraID
 	extra[tumblebug.ExtraNode] = req.NodeID
-	name := req.Name
-	if name == "" {
-		name = req.NodeID
-	}
 	return monitoring.Target{
-		EntityID: req.Uid, Kind: tumblebug.KindVM, Name: name,
+		EntityID: req.UID, Kind: tumblebug.KindVM, Name: req.Name,
 		Provider: req.Provider, Region: req.Region, OS: req.OS,
 		GPUCount: req.GPUCount, GPUModel: req.GPUModel, Extra: extra,
 	}

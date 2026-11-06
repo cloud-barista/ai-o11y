@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestAttributeSplit(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	at := time.Unix(0, 0).UTC().Add(10 * time.Minute)
 	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st, at: at}
-	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 1}, Runner: runner}
+	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 1}, Runner: runner, Now: runner.now}
 
 	// values answers q as label value of attr -> value; "" for no attr.
 	values := func(q monitoring.QuerySpec, label string) map[string]float64 {
@@ -102,7 +103,7 @@ func TestGPUFields(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st,
 		at: time.Unix(0, 0).UTC().Add(10 * time.Minute)}
-	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 1}, Runner: runner}
+	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 1}, Runner: runner, Now: runner.now}
 	one := func(q monitoring.QuerySpec, label string) map[string]float64 {
 		t.Helper()
 		q.Targets = targets("a")
@@ -134,5 +135,26 @@ func TestGPUFields(t *testing.T) {
 	}
 	if got := one(monitoring.QuerySpec{Metric: "nvidia_smi:pstate"}, ""); got[""] != 8 {
 		t.Errorf("pstate = %v", got)
+	}
+}
+
+// TestWhereTakesKnownValuesOnly: a Where value goes into the expression, so
+// only the values the attribute is known to take are accepted; "$sel" would
+// expand into a selector and "$1" into a replacement reference.
+func TestWhereTakesKnownValuesOnly(t *testing.T) {
+	r := testRenderer(t)
+	for _, v := range []string{"$sel", "$range", "user$1", "typo"} {
+		_, err := r.Render(monitoring.QuerySpec{Metric: "system.cpu.utilization", Targets: targets("a"),
+			Where: map[string]string{"cpu.mode": v}})
+		if !errors.Is(err, ErrInvalidQuery) {
+			t.Errorf("where cpu.mode=%q: err = %v, want ErrInvalidQuery", v, err)
+		}
+	}
+	if _, err := r.Render(monitoring.QuerySpec{Metric: "system.cpu.utilization", Targets: targets("a"),
+		Where: map[string]string{"cpu.mode": "user"}}); err != nil {
+		t.Errorf("known value: %v", err)
+	}
+	if _, err := r.Render(monitoring.QuerySpec{Metric: "system.nope", Targets: targets("a")}); !errors.Is(err, ErrInvalidQuery) {
+		t.Errorf("unknown metric: err = %v, want ErrInvalidQuery", err)
 	}
 }

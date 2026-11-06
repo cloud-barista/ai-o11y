@@ -158,7 +158,7 @@ type node struct {
 	ID               string `json:"id"`
 	UID              string `json:"uid"`
 	Name             string `json:"name"`
-	CspResourceID    string `json:"cspResourceId"`
+	CSPResourceID    string `json:"cspResourceId"`
 	ConnectionName   string `json:"connectionName"`
 	ConnectionConfig struct {
 		ProviderName string `json:"providerName"`

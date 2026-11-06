@@ -113,8 +113,8 @@ func (s *Syncer) Sync(ctx context.Context) (SyncResult, error) {
 		exists, err := s.source.Exists(ctx, stored)
 		switch {
 		case err != nil:
-			log.Warn().Str("target", key).Err(err).Msg("Keeping target that could not be checked")
-			result.Kept[key] = err.Error()
+			log.Warn().Str("targetId", key).Err(err).Msg("Keeping target that could not be checked")
+			result.Kept[key] = "the platform could not be asked whether it still has it"
 		case exists:
 			result.Kept[key] = "not listed, but the platform still has it"
 		default:

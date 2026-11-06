@@ -128,9 +128,10 @@ func testRenderer(t *testing.T) PromQL {
 func planners(t *testing.T) (whole, chunked Planner, chunkedRunner *engineRunner) {
 	t.Helper()
 	r := testRenderer(t)
-	whole = Planner{Renderer: r, Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 4}, Runner: newRunner(t)}
+	wholeRunner := newRunner(t)
+	whole = Planner{Renderer: r, Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 4}, Runner: wholeRunner, Now: wholeRunner.now}
 	chunkedRunner = newRunner(t)
-	chunked = Planner{Renderer: r, Limits: ChunkLimits{MaxIDs: 2, MaxConcurrent: 3}, Runner: chunkedRunner}
+	chunked = Planner{Renderer: r, Limits: ChunkLimits{MaxIDs: 2, MaxConcurrent: 3}, Runner: chunkedRunner, Now: chunkedRunner.now}
 	return whole, chunked, chunkedRunner
 }
 
@@ -274,5 +275,42 @@ func TestTopKOfRanksLikePromQL(t *testing.T) {
 	}
 	if got := ids(topKOf(in, monitoring.TopK{N: 5, Desc: true})); got != "a,b,c,d,e" {
 		t.Errorf("top 5 = %s, want every series with a point, NaN included", got)
+	}
+}
+
+func (r *engineRunner) now() time.Time { return r.at }
+
+// shiftingRunner answers instant queries without a time at a later "now" on
+// each call, the way chunks sent at different moments are evaluated by a real
+// backend.
+type shiftingRunner struct {
+	*engineRunner
+	calls int
+}
+
+func (r *shiftingRunner) Instant(ctx context.Context, expr string, at time.Time) ([]monitoring.Series, error) {
+	if at.IsZero() {
+		r.calls++
+		at = r.at.Add(time.Duration(r.calls) * time.Second)
+	}
+	return r.engineRunner.Instant(ctx, expr, at)
+}
+
+// TestPlannerPinsInstantTime: an instant query without End is evaluated at
+// one time across its chunks, so their points merge.
+func TestPlannerPinsInstantTime(t *testing.T) {
+	base := newRunner(t)
+	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 2, MaxConcurrent: 1},
+		Runner: &shiftingRunner{engineRunner: base}, Now: base.now}
+	for _, fn := range []monitoring.AggFn{monitoring.AggSum, monitoring.AggAvg} {
+		got, err := p.Query(context.Background(), monitoring.QuerySpec{
+			Metric: "system.memory.utilization", Targets: targets(fleet...), Across: fn,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", fn, err)
+		}
+		if len(got) != 1 || len(got[0].Points) != 1 {
+			t.Errorf("%s across %d chunks = %+v, want one point", fn, len(fleet)/2+1, got)
+		}
 	}
 }

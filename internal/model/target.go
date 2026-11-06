@@ -7,17 +7,17 @@ const (
 )
 
 // TargetReq registers a target when its agent is installed. The target is
-// named the way ai-app names a deployment target. Uid and the description
-// after it are what CB-Tumblebug reports for the node; when Uid is empty they
-// are read from CB-Tumblebug.
+// named the way ai-app names a deployment target. UID and the description
+// after it are what CB-Tumblebug reports for the node; when UID is empty they
+// are read from CB-Tumblebug. Name stays empty when not given.
 type TargetReq struct {
 	// Kind is "node". "k8s" is reserved and refused with 422.
-	Kind    string `json:"kind" enums:"node,k8s" example:"node"`
-	NsID    string `json:"nsId" example:"ns01"`
-	InfraID string `json:"infraId" example:"infra01"`
-	NodeID  string `json:"nodeId" example:"node01"`
-	// Uid is the CB-Tumblebug node Uid, the target's key.
-	Uid      string `json:"uid,omitempty" example:"d44ikdomt0tac4ejrmmg"`
+	Kind    string `json:"kind" validate:"required" enums:"node,k8s" example:"node"`
+	NsID    string `json:"nsId" validate:"required" example:"ns01"`
+	InfraID string `json:"infraId" validate:"required" example:"infra01"`
+	NodeID  string `json:"nodeId" validate:"required" example:"node01"`
+	// UID is the CB-Tumblebug node Uid, the target's key.
+	UID      string `json:"uid,omitempty" example:"d44ikdomt0tac4ejrmmg"`
 	Name     string `json:"name,omitempty" example:"web-1"`
 	Provider string `json:"provider,omitempty" example:"aws"`
 	Region   string `json:"region,omitempty" example:"ap-northeast-2"`

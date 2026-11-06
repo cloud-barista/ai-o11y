@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -95,6 +96,9 @@ func unsupported(r monitoring.MetricRow, t monitoring.Target, running map[string
 		}
 	}
 	if !provided {
+		if r.Area == "gpu" && t.GPUCount > 0 {
+			return "The target's GPU model does not name NVIDIA, the only GPU vendor read yet"
+		}
 		return "No collector running on this target provides it"
 	}
 	for _, req := range r.Requires {
@@ -187,12 +191,17 @@ func (h *handler) RestPostQuery(c echo.Context) error {
 	series, err := h.Backend.Query(ctx, q)
 	if err != nil {
 		var apiErr *promapi.APIError
-		if errors.As(err, &apiErr) || errors.Is(err, promapi.ErrUnavailable) {
+		switch {
+		case errors.Is(err, query.ErrInvalidQuery):
+			log.Warn().Err(err).Str("metric", q.Metric).Msg("Query could not be built")
+			return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Query does not fit the metric: check the window, within, groupBy and topK"})
+		case errors.As(err, &apiErr) && apiErr.Type == "bad_data":
+			log.Warn().Err(err).Str("metric", q.Metric).Msg("Metrics backend refused the query")
+			return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Metrics backend refused the query: narrow the range or widen the step"})
+		default:
 			log.Error().Err(err).Str("metric", q.Metric).Msg("Metrics backend query failed")
 			return c.JSON(http.StatusBadGateway, model.SimpleMsg{Message: "Metrics backend query failed"})
 		}
-		log.Warn().Err(err).Str("metric", q.Metric).Msg("Query could not be built")
-		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Query could not be built: " + err.Error()})
 	}
 	return c.JSON(http.StatusOK, queryResp(row, series, q.Targets))
 }
@@ -214,8 +223,8 @@ func checkAttributes(row monitoring.MetricRow, q monitoring.QuerySpec) string {
 		if a != row.Attribute.Name {
 			return "Metric splits by " + row.Attribute.Name + " only"
 		}
-		if v == "" {
-			return "where needs a value for " + a
+		if !slices.Contains(row.Attribute.Values, v) {
+			return a + " takes one of: " + strings.Join(row.Attribute.Values, ", ")
 		}
 	}
 	return ""

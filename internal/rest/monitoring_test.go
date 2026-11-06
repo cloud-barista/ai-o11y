@@ -20,6 +20,7 @@ import (
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/collector"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/mapping"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/query"
 )
 
 type memStore struct{ targets map[string]monitoring.Target }
@@ -133,7 +134,7 @@ func TestPostTarget(t *testing.T) {
 		t.Errorf("stored %+v", got)
 	}
 
-	if code, body = call(t, s, http.MethodPost, "/targets", `{"nsId":"ns01","infraId":"infra01","nodeId":"node01"}`); code != http.StatusOK {
+	if code, body = call(t, s, http.MethodPost, "/targets", `{"kind":"node","nsId":"ns01","infraId":"infra01","nodeId":"node01"}`); code != http.StatusOK {
 		t.Fatalf("register by platform names = %d %s", code, body)
 	}
 	if _, ok := store.targets["uid-fetched"]; !ok {
@@ -144,11 +145,12 @@ func TestPostTarget(t *testing.T) {
 		body string
 		want int
 	}{
-		"node not in platform": {`{"nsId":"ns01","infraId":"infra01","nodeId":"gone"}`, http.StatusNotFound},
+		"node not in platform": {`{"kind":"node","nsId":"ns01","infraId":"infra01","nodeId":"gone"}`, http.StatusNotFound},
 		"kubernetes":           {`{"kind":"k8s","nsId":"ns01"}`, http.StatusUnprocessableEntity},
-		"missing nodeId":       {`{"nsId":"ns01","infraId":"infra01"}`, http.StatusBadRequest},
-		"bad os":               {`{"nsId":"a","infraId":"b","nodeId":"c","uid":"u","os":"mac"}`, http.StatusBadRequest},
+		"missing nodeId":       {`{"kind":"node","nsId":"ns01","infraId":"infra01"}`, http.StatusBadRequest},
+		"bad os":               {`{"kind":"node","nsId":"a","infraId":"b","nodeId":"c","uid":"u","os":"mac"}`, http.StatusBadRequest},
 		"bad json":             {`{`, http.StatusBadRequest},
+		"no kind":              {`{"nsId":"a","infraId":"b","nodeId":"c","uid":"u"}`, http.StatusBadRequest},
 	} {
 		if code, body := call(t, s, http.MethodPost, "/targets", tc.body); code != tc.want {
 			t.Errorf("%s: %d %s, want %d", name, code, body, tc.want)
@@ -156,7 +158,7 @@ func TestPostTarget(t *testing.T) {
 	}
 
 	noSource := newTestServer(t, Deps{Targets: store})
-	if code, _ := call(t, noSource, http.MethodPost, "/targets", `{"nsId":"a","infraId":"b","nodeId":"c"}`); code != http.StatusServiceUnavailable {
+	if code, _ := call(t, noSource, http.MethodPost, "/targets", `{"kind":"node","nsId":"a","infraId":"b","nodeId":"c"}`); code != http.StatusServiceUnavailable {
 		t.Errorf("register by names without a platform = %d, want 503", code)
 	}
 }
@@ -284,6 +286,17 @@ func TestTargetMetrics(t *testing.T) {
 	if m := status("k3")["system.process.count"]; m.Supported || !strings.Contains(m.Reason, "unknown") {
 		t.Errorf("process count with unknown OS = %+v", m)
 	}
+	gpuUnknown := monitoring.Target{EntityID: "k4", Kind: "vm", OS: "linux", GPUCount: 1}
+	store.targets["k4"] = gpuUnknown
+	if m := status("k4")["hw.gpu.utilization"]; m.Supported || !strings.Contains(m.Reason, "NVIDIA") {
+		t.Errorf("gpu with no model = %+v, want unsupported naming the vendor", m)
+	}
+	gpu := gpuUnknown
+	gpu.EntityID, gpu.GPUModel = "k5", "NVIDIA T4"
+	store.targets["k5"] = gpu
+	if m := status("k5")["hw.gpu.utilization"]; !m.Supported {
+		t.Errorf("nvidia gpu = %+v", m)
+	}
 	if code, _ := call(t, s, http.MethodGet, "/targets/nope/metrics", ""); code != http.StatusNotFound {
 		t.Errorf("unknown target = %d", code)
 	}
@@ -343,6 +356,7 @@ func TestQuery(t *testing.T) {
 		"own field without schema": {`{"metric":"system.cpu.load_average.1m","targetIds":["k1"]}`, http.StatusNotFound},
 		"other attribute":          {`{"metric":"system.cpu.utilization","targetIds":["k1"],"splitBy":["system.memory.state"]}`, http.StatusBadRequest},
 		"no attribute":             {`{"metric":"system.uptime","targetIds":["k1"],"where":{"cpu.mode":"user"}}`, http.StatusBadRequest},
+		"unknown value":            {`{"metric":"system.cpu.utilization","targetIds":["k1"],"where":{"cpu.mode":"$sel"}}`, http.StatusBadRequest},
 	} {
 		if code, body := call(t, s, http.MethodPost, "/query", tc.body); code != tc.want {
 			t.Errorf("%s: %d %s, want %d", name, code, body, tc.want)
@@ -353,8 +367,17 @@ func TestQuery(t *testing.T) {
 	if code, _ := call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"]}`); code != http.StatusBadGateway {
 		t.Errorf("backend failure = %d, want 502", code)
 	}
-	backend.err = errors.New("window needs both a function and a positive range")
+	backend.err = fmt.Errorf("%w: window needs both a function and a positive range", query.ErrInvalidQuery)
+	code, body = call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"]}`)
+	if code != http.StatusBadRequest || strings.Contains(body, "window needs") {
+		t.Errorf("unbuildable query = %d %s, want 400 without the internal reason", code, body)
+	}
+	backend.err = &promapi.APIError{StatusCode: 400, Type: "bad_data", Message: "exceeded maximum resolution of 11,000 points"}
 	if code, _ := call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"]}`); code != http.StatusBadRequest {
-		t.Errorf("unbuildable query = %d, want 400", code)
+		t.Errorf("backend refusing the query = %d, want 400", code)
+	}
+	backend.err = errors.New("decode failed")
+	if code, _ := call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"]}`); code != http.StatusBadGateway {
+		t.Errorf("other backend failure = %d, want 502", code)
 	}
 }

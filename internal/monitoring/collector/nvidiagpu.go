@@ -13,10 +13,6 @@ import (
 // (otelcol/receiver/nvidiagpureceiver).
 const NvidiaGPUReceiver = "nvidia_gpu"
 
-// otherGPUVendors are words in a GPU model that name a vendor other than
-// NVIDIA.
-var otherGPUVendors = []string{"amd", "radeon", "instinct", "intel", "gaudi", "habana"}
-
 // NvidiaGPU renders the NVIDIA GPU receiver, reading nvidia-smi, for a VM with
 // GPUs.
 type NvidiaGPU struct {
@@ -32,19 +28,11 @@ func (NvidiaGPU) Name() string { return catalog.CollectorNvidiaSMI }
 func (NvidiaGPU) Path() monitoring.Path { return monitoring.PathAgent }
 
 // AppliesTo implements monitoring.CollectorKind: a VM the platform reports
-// GPUs on, unless their model names another vendor. A model left empty is
-// taken for NVIDIA, the only vendor the collector reads yet.
+// NVIDIA GPUs on. The vendor is known from the GPU model, which CB-Tumblebug
+// names with it ("NVIDIA T4", "nvidia-a100-80gb"); a model that does not name
+// NVIDIA, or none, gets no GPU receiver rather than a guess.
 func (NvidiaGPU) AppliesTo(t monitoring.Target) bool {
-	if t.Kind != "vm" || t.GPUCount <= 0 {
-		return false
-	}
-	model := strings.ToLower(t.GPUModel)
-	for _, v := range otherGPUVendors {
-		if strings.Contains(model, v) {
-			return false
-		}
-	}
-	return true
+	return t.Kind == "vm" && t.GPUCount > 0 && strings.Contains(strings.ToLower(t.GPUModel), "nvidia")
 }
 
 // Render implements monitoring.CollectorKind.

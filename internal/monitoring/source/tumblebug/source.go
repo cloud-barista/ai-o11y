@@ -33,7 +33,7 @@ const (
 	ExtraNode          = "nodeId"
 	ExtraConnection    = "connectionName"
 	ExtraZone          = "zone"
-	ExtraCspResourceID = "cspResourceId"
+	ExtraCSPResourceID = "cspResourceId"
 	ExtraOSType        = "osType"
 )
 
@@ -178,9 +178,6 @@ func toTarget(nsID string, n node) monitoring.Target {
 			ExtraNode:      n.ID,
 		},
 	}
-	if t.Name == "" {
-		t.Name = n.ID
-	}
 	if strings.EqualFold(n.Spec.AcceleratorType, "gpu") && n.Spec.AcceleratorCount > 0 {
 		t.GPUCount = n.Spec.AcceleratorCount
 		t.GPUModel = n.Spec.AcceleratorModel
@@ -188,7 +185,7 @@ func toTarget(nsID string, n node) monitoring.Target {
 	for key, value := range map[string]string{
 		ExtraConnection:    n.ConnectionName,
 		ExtraZone:          n.Region.Zone,
-		ExtraCspResourceID: n.CspResourceID,
+		ExtraCSPResourceID: n.CSPResourceID,
 		ExtraOSType:        n.Image.OSType,
 	} {
 		if value != "" {

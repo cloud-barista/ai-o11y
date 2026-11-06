@@ -29,6 +29,17 @@ const MinRateRange = time.Minute
 // first, then Render the query for the picked targets without TopK.
 var ErrTwoStage = errors.New("top-k takes two stages: RenderTopK, then Render for the picked targets")
 
+// ErrInvalidQuery wraps every reason a QuerySpec cannot be rendered, so a
+// caller can tell a query it should not have sent from a backend failure.
+var ErrInvalidQuery = errors.New("invalid query")
+
+func invalid(err error) error {
+	if err == nil || errors.Is(err, ErrInvalidQuery) || errors.Is(err, ErrTwoStage) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrInvalidQuery, err)
+}
+
 // TwoStage reports whether the top-k of q needs a query of its own: topk in a
 // range query picks again at every step, so the series would change along the
 // graph.
@@ -55,6 +66,11 @@ type PromQL struct {
 // query with that step otherwise; the step itself is a request parameter, not
 // part of the expression.
 func (r PromQL) Render(q monitoring.QuerySpec) (string, error) {
+	expr, err := r.render(q)
+	return expr, invalid(err)
+}
+
+func (r PromQL) render(q monitoring.QuerySpec) (string, error) {
 	expr, err := r.perTarget(q)
 	if err != nil {
 		return "", err
@@ -75,6 +91,11 @@ func (r PromQL) Render(q monitoring.QuerySpec) (string, error) {
 // Window function (average when none), evaluated at End. Run it, narrow
 // q.Targets to the keys it returns, and Render q with TopK cleared.
 func (r PromQL) RenderTopK(q monitoring.QuerySpec) (string, error) {
+	expr, err := r.renderTopK(q)
+	return expr, invalid(err)
+}
+
+func (r PromQL) renderTopK(q monitoring.QuerySpec) (string, error) {
 	if q.TopK == nil {
 		return "", errors.New("query has no top-k")
 	}
@@ -224,6 +245,12 @@ func template(row monitoring.MetricRow, collector, expr string, q monitoring.Que
 	value, ok := q.Where[name]
 	if !ok {
 		return split, nil
+	}
+	// Only a value the attribute is known to take goes into the expression:
+	// anything else could carry placeholders ($sel) or replacement
+	// references ($1) into it.
+	if !slices.Contains(row.Attribute.Values, value) {
+		return "", fmt.Errorf("%w: %s is not a value of %s", ErrInvalidQuery, value, name)
 	}
 	label := monitoring.AttrLabel(name)
 	keep := fmt.Sprintf(`label_replace(vector(1), %q, %q, "", "")`, label, value)

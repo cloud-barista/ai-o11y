@@ -22,7 +22,7 @@ func TestFillZero(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	at := time.Unix(0, 0).UTC().Add(10 * time.Minute)
 	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st, at: at}
-	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 1}, Runner: runner}
+	p := Planner{Renderer: testRenderer(t), Limits: ChunkLimits{MaxIDs: 255, MaxConcurrent: 1}, Runner: runner, Now: runner.now}
 
 	values := func(q monitoring.QuerySpec) map[string]float64 {
 		t.Helper()
