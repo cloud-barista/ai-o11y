@@ -19,8 +19,8 @@ import (
 const LabelEntityID = "entity_id"
 
 // Target is one thing to monitor in the common model every management platform
-// adapter fills, the way CB-Spider maps each CSP onto one VM model: fixed
-// common fields, plus the platform's own attributes in Extra. Apart from
+// adapter fills: fixed common fields, plus the platform's own attributes in
+// Extra. Apart from
 // EntityID, none of it is put on series; it is what the mapping layer selects
 // targets by.
 type Target struct {
@@ -139,9 +139,8 @@ const (
 	PlaceholderRange = "$range"
 )
 
-// MetricRow is one field of the metric catalog, in the way Spider abstracts
-// clouds: collectors keep their own names, and the catalog says how each field
-// is computed from them.
+// MetricRow is one field of the metric catalog: collectors keep their own
+// names, and the catalog says how each field is computed from them.
 //
 //   - A common field (Schema empty) means the same thing whichever collector
 //     provides it; its name and meaning are the OpenTelemetry semantic

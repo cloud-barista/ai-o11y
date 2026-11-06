@@ -7,8 +7,6 @@ lists it for one target.
 
 ## Principles
 
-The catalog abstracts collectors the way CB-Spider abstracts clouds.
-
 1. **Collectors keep their own names.** The OpenTelemetry hostmetrics receiver,
    `nvidia-smi` or NVML write metrics under the names they define. ai-o11y does
    not rename them at collection time.
