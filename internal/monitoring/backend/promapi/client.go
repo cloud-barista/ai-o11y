@@ -1,0 +1,292 @@
+// Package promapi is a client for the Prometheus HTTP query API, which
+// Prometheus, the Thanos Querier and Mimir all serve. Backend providers build
+// on it and add what is their own, such as Thanos' dedup parameter.
+package promapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/rs/zerolog/log"
+
+	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+)
+
+const (
+	// maxRetries is how many times a request the backend rate-limited (429) is
+	// sent again, waiting longer each time.
+	maxRetries       = 4
+	defaultRetryBase = 500 * time.Millisecond
+	maxErrorBody     = 4 << 10
+	// httpSlack is how much longer the HTTP client waits than the query
+	// timeout it sends, so the backend's own timeout error arrives first.
+	httpSlack = 5 * time.Second
+)
+
+// Config is where the query API is and how every request is sent.
+type Config struct {
+	// BaseURL is the address the /api/v1 paths hang from, such as
+	// "http://thanos-query:10902".
+	BaseURL string
+	// Timeout is sent as the timeout parameter of every query, so time spent
+	// waiting for a query slot counts against it too.
+	Timeout time.Duration
+	// Headers are set on every request.
+	Headers map[string]string
+	// Params are added to every query, such as Thanos' dedup.
+	Params url.Values
+}
+
+// Client sends PromQL to the query API. Every query is a form POST: a query
+// over 255 entity ids is about 9.4 KB, over the 8 KB request line many
+// proxies allow.
+type Client struct {
+	cfg        Config
+	baseURL    string
+	httpClient *http.Client
+	retryBase  time.Duration
+}
+
+// NewClient builds a Client from cfg.
+func NewClient(cfg Config) (*Client, error) {
+	if cfg.BaseURL == "" {
+		return nil, errors.New("query API base URL is empty")
+	}
+	if cfg.Timeout <= 0 {
+		return nil, errors.New("query timeout must be positive")
+	}
+	return &Client{
+		cfg:        cfg,
+		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
+		httpClient: &http.Client{Timeout: cfg.Timeout + httpSlack},
+		retryBase:  defaultRetryBase,
+	}, nil
+}
+
+// Instant evaluates expr at at; a zero at means now.
+func (c *Client) Instant(ctx context.Context, expr string, at time.Time) ([]monitoring.Series, error) {
+	form := url.Values{"query": {expr}}
+	if !at.IsZero() {
+		form.Set("time", formatTime(at))
+	}
+	return c.query(ctx, "/api/v1/query", form)
+}
+
+// Range evaluates expr from start to end every step.
+func (c *Client) Range(ctx context.Context, expr string, start, end time.Time, step time.Duration) ([]monitoring.Series, error) {
+	if step <= 0 {
+		return nil, errors.New("range query needs a positive step")
+	}
+	form := url.Values{
+		"query": {expr},
+		"start": {formatTime(start)},
+		"end":   {formatTime(end)},
+		"step":  {strconv.FormatFloat(step.Seconds(), 'f', -1, 64)},
+	}
+	return c.query(ctx, "/api/v1/query_range", form)
+}
+
+// Series returns the label sets of the series match selects.
+func (c *Client) Series(ctx context.Context, match string) ([]map[string]string, error) {
+	var out []map[string]string
+	if err := c.post(ctx, "/api/v1/series", url.Values{"match[]": {match}}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *Client) query(ctx context.Context, path string, form url.Values) ([]monitoring.Series, error) {
+	form.Set("timeout", c.cfg.Timeout.String())
+	var data queryData
+	if err := c.post(ctx, path, form, &data); err != nil {
+		return nil, err
+	}
+	return data.series()
+}
+
+// post sends form to path with the configured parameters and decodes the data
+// of a successful answer into out. A 429 is retried up to maxRetries times
+// with a growing wait.
+func (c *Client) post(ctx context.Context, path string, form url.Values, out any) error {
+	for name, values := range c.cfg.Params {
+		form[name] = values
+	}
+	body := form.Encode()
+	wait := c.retryBase
+	for attempt := 0; ; attempt++ {
+		retryAfter, err := c.postOnce(ctx, path, body, out)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusTooManyRequests || attempt == maxRetries {
+			return err
+		}
+		if retryAfter > 0 {
+			wait = retryAfter
+		}
+		log.Debug().Str("path", path).Dur("wait", wait).Int("retry", attempt+1).Msg("Query API rate-limited the request")
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		wait *= 2
+	}
+}
+
+func (c *Client) postOnce(ctx context.Context, path, body string, out any) (time.Duration, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, strings.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	for name, value := range c.cfg.Headers {
+		req.Header.Set(name, value)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("failed to call query API %s: %w", path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read query API response for %s: %w", path, err)
+	}
+	var env envelope
+	jsonErr := json.Unmarshal(raw, &env)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || env.Status != "success" {
+		apiErr := &APIError{StatusCode: resp.StatusCode, Type: env.ErrorType, Message: env.Error}
+		if jsonErr != nil || apiErr.Message == "" {
+			apiErr.Message = strings.TrimSpace(string(raw[:min(len(raw), maxErrorBody)]))
+		}
+		var retryAfter time.Duration
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
+			retryAfter = time.Duration(secs) * time.Second
+		}
+		return retryAfter, apiErr
+	}
+	if jsonErr != nil {
+		return 0, fmt.Errorf("failed to decode query API response for %s: %w", path, jsonErr)
+	}
+	for _, w := range env.Warnings {
+		log.Warn().Str("path", path).Str("warning", w).Msg("Query API answered with a warning")
+	}
+	if err := json.Unmarshal(env.Data, out); err != nil {
+		return 0, fmt.Errorf("failed to decode query API data for %s: %w", path, err)
+	}
+	return 0, nil
+}
+
+// APIError is an answer the query API did not mark as a success.
+type APIError struct {
+	StatusCode int
+	// Type is the API's errorType, such as "bad_data" or "timeout".
+	Type    string
+	Message string
+}
+
+func (e *APIError) Error() string {
+	if e.Type != "" {
+		return fmt.Sprintf("query API responded %d (%s): %s", e.StatusCode, e.Type, e.Message)
+	}
+	return fmt.Sprintf("query API responded %d: %s", e.StatusCode, e.Message)
+}
+
+// envelope is the frame of every query API answer.
+type envelope struct {
+	Status    string          `json:"status"`
+	Data      json.RawMessage `json:"data"`
+	ErrorType string          `json:"errorType"`
+	Error     string          `json:"error"`
+	Warnings  []string        `json:"warnings"`
+}
+
+type queryData struct {
+	ResultType string          `json:"resultType"`
+	Result     json.RawMessage `json:"result"`
+}
+
+type sample [2]json.RawMessage
+
+type sampleSeries struct {
+	Metric map[string]string `json:"metric"`
+	Value  *sample           `json:"value"`
+	Values []sample          `json:"values"`
+}
+
+func (d queryData) series() ([]monitoring.Series, error) {
+	switch d.ResultType {
+	case "vector", "matrix":
+		var raw []sampleSeries
+		if err := json.Unmarshal(d.Result, &raw); err != nil {
+			return nil, fmt.Errorf("failed to decode %s result: %w", d.ResultType, err)
+		}
+		out := make([]monitoring.Series, 0, len(raw))
+		for _, r := range raw {
+			s := monitoring.Series{Labels: r.Metric}
+			if s.Labels == nil {
+				s.Labels = map[string]string{}
+			}
+			samples := r.Values
+			if r.Value != nil {
+				samples = []sample{*r.Value}
+			}
+			for _, smp := range samples {
+				p, err := smp.point()
+				if err != nil {
+					return nil, err
+				}
+				s.Points = append(s.Points, p)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	case "scalar":
+		var smp sample
+		if err := json.Unmarshal(d.Result, &smp); err != nil {
+			return nil, fmt.Errorf("failed to decode scalar result: %w", err)
+		}
+		p, err := smp.point()
+		if err != nil {
+			return nil, err
+		}
+		return []monitoring.Series{{Labels: map[string]string{}, Points: []monitoring.Point{p}}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported result type %q", d.ResultType)
+	}
+}
+
+// point decodes [unix seconds, "value"]; the value may be "NaN" or "+Inf".
+func (s sample) point() (monitoring.Point, error) {
+	var ts float64
+	if err := json.Unmarshal(s[0], &ts); err != nil {
+		return monitoring.Point{}, fmt.Errorf("bad sample time %s: %w", s[0], err)
+	}
+	var str string
+	if err := json.Unmarshal(s[1], &str); err != nil {
+		return monitoring.Point{}, fmt.Errorf("bad sample value %s: %w", s[1], err)
+	}
+	v, err := strconv.ParseFloat(str, 64)
+	if err != nil {
+		return monitoring.Point{}, fmt.Errorf("bad sample value %q: %w", str, err)
+	}
+	sec, frac := math.Modf(ts)
+	t := time.Unix(int64(sec), int64(math.Round(frac*1e3))*int64(time.Millisecond)).UTC()
+	return monitoring.Point{T: t, V: v}, nil
+}
+
+func formatTime(t time.Time) string {
+	return strconv.FormatFloat(float64(t.UnixMilli())/1e3, 'f', -1, 64)
+}

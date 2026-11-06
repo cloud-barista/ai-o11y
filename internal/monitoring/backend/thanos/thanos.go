@@ -1,0 +1,115 @@
+// Package thanos is the Backend provider for Thanos: collectors write to the
+// configured OTLP endpoint and queries go to the Thanos Querier.
+package thanos
+
+import (
+	"context"
+	"errors"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/promapi"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/query"
+)
+
+// ProviderName is the name the backend is registered under.
+const ProviderName = "thanos"
+
+// Defaults for the settings left zero.
+const (
+	// DefaultTimeout is the Thanos Querier's own --query.timeout default.
+	DefaultTimeout = 2 * time.Minute
+	// DefaultMaxIDs keeps a chunk in the 255-alternative regex set lookup
+	// Prometheus and Thanos match through.
+	DefaultMaxIDs = 255
+	// DefaultMaxConcurrent stays at half the Thanos Querier's
+	// --query.max-concurrent default of 20, which every other user shares.
+	DefaultMaxConcurrent = 10
+)
+
+// Config is how this deployment's Thanos is reached.
+type Config struct {
+	// QueryURL is the Thanos Querier HTTP address, such as
+	// "http://thanos-query:10902".
+	QueryURL string
+	// Write is where collectors send samples (OTLP over HTTP). Which component
+	// takes them depends on the deployment: Prometheus with a Sidecar, or a
+	// Thanos Receive.
+	Write monitoring.Endpoint
+	// PartialResponse lets a query answer with what the reachable stores hold
+	// when another store fails. Off, any failing store fails the query, even
+	// a replica whose data another one also holds. It is off for now, a
+	// decision to revisit with the deployment's sharding and replication.
+	PartialResponse bool
+	Timeout         time.Duration
+	Limits          query.ChunkLimits
+	// Headers are set on every query request.
+	Headers map[string]string
+}
+
+// Backend implements monitoring.Backend over a Thanos Querier.
+type Backend struct {
+	write   monitoring.Endpoint
+	client  *promapi.Client
+	planner query.Planner
+}
+
+var _ monitoring.Backend = (*Backend)(nil)
+
+// New builds the backend; renderer turns a QuerySpec into PromQL.
+func New(cfg Config, renderer query.PromQL) (*Backend, error) {
+	if cfg.QueryURL == "" {
+		return nil, errors.New("thanos query URL is empty")
+	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = DefaultTimeout
+	}
+	if cfg.Limits.MaxIDs == 0 {
+		cfg.Limits.MaxIDs = DefaultMaxIDs
+	}
+	if cfg.Limits.MaxConcurrent == 0 {
+		cfg.Limits.MaxConcurrent = DefaultMaxConcurrent
+	}
+	if cfg.Write.Protocol == "" {
+		cfg.Write.Protocol = "otlp_http"
+	}
+	client, err := promapi.NewClient(promapi.Config{
+		BaseURL: cfg.QueryURL,
+		Timeout: cfg.Timeout,
+		Headers: cfg.Headers,
+		Params: url.Values{
+			// The Querier deduplicates by default; it is sent so a querier
+			// started otherwise still merges replicas.
+			"dedup":            {"true"},
+			"partial_response": {strconv.FormatBool(cfg.PartialResponse)},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Backend{
+		write:   cfg.Write,
+		client:  client,
+		planner: query.Planner{Renderer: renderer, Limits: cfg.Limits, Runner: client},
+	}, nil
+}
+
+// WriteEndpoint implements monitoring.Backend.
+func (b *Backend) WriteEndpoint() monitoring.Endpoint { return b.write }
+
+// Query implements monitoring.Backend.
+func (b *Backend) Query(ctx context.Context, q monitoring.QuerySpec) ([]monitoring.Series, error) {
+	return b.planner.Query(ctx, q)
+}
+
+// Series implements monitoring.Backend.
+func (b *Backend) Series(ctx context.Context, match string) ([]map[string]string, error) {
+	return b.client.Series(ctx, match)
+}
+
+// Capabilities implements monitoring.Backend.
+func (b *Backend) Capabilities() monitoring.BackendCaps {
+	return monitoring.BackendCaps{"promql": true}
+}
