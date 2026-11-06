@@ -228,14 +228,64 @@ func TestMetrics(t *testing.T) {
 	for _, m := range list.Metrics {
 		byName[m.Name] = m
 	}
-	if m := byName["host.cpu.utilization"]; !m.Supported {
-		t.Errorf("cpu utilization = %+v", m)
+	if m := byName["system.cpu.utilization"]; !m.Supported || m.Schema != "" || m.Attribute == nil || m.Attribute.Name != "cpu.mode" {
+		t.Errorf("cpu utilization = %+v, want a supported common field split by cpu.mode", m)
 	}
-	if m := byName["host.cpu.user"]; m.Supported || m.Gap == "" {
-		t.Errorf("cpu user = %+v, want unsupported with a reason", m)
+	if m := byName["system.cpu.load_average.1m"]; m.Schema != "hostmetrics" {
+		t.Errorf("load average = %+v, want hostmetrics' own field", m)
 	}
-	if m := byName["host.processes.zombie"]; !m.ZeroFill {
-		t.Errorf("zombie = %+v, want zeroFill", m)
+	if m := byName["system.paging.operations"]; m.Supported || m.Gap == "" {
+		t.Errorf("paging operations = %+v, want unsupported with a reason", m)
+	}
+	if m := byName["system.process.count"]; !m.ZeroFill {
+		t.Errorf("process count = %+v, want zeroFill", m)
+	}
+	if m := byName["system.disk.io"]; m.Dimension != "system.device.name" {
+		t.Errorf("disk io dimension = %q, want the OpenTelemetry name", m.Dimension)
+	}
+}
+
+func TestTargetMetrics(t *testing.T) {
+	store := fleet()
+	windows := store.targets["k2"]
+	windows.OS = "windows"
+	store.targets["k2"] = windows
+	unknown := monitoring.Target{EntityID: "k3", Kind: "vm"}
+	store.targets["k3"] = unknown
+	s := newTestServer(t, Deps{Targets: store})
+
+	status := func(id string) map[string]model.TargetMetricInfo {
+		t.Helper()
+		code, body := call(t, s, http.MethodGet, "/targets/"+id+"/metrics", "")
+		var resp model.TargetMetricListResp
+		if code != http.StatusOK || json.Unmarshal([]byte(body), &resp) != nil {
+			t.Fatalf("target metrics %s = %d %s", id, code, body)
+		}
+		out := map[string]model.TargetMetricInfo{}
+		for _, m := range resp.Metrics {
+			out[m.Name] = m
+		}
+		return out
+	}
+	linux := status("k1")
+	if !linux["system.cpu.utilization"].Supported || !linux["system.cpu.load_average.1m"].Supported {
+		t.Errorf("linux vm: %+v / %+v", linux["system.cpu.utilization"], linux["system.cpu.load_average.1m"])
+	}
+	if m := linux["system.paging.operations"]; m.Supported || m.Reason == "" {
+		t.Errorf("paging operations on linux = %+v, want unsupported with the gap", m)
+	}
+	win := status("k2")
+	if m := win["system.cpu.load_average.1m"]; m.Supported || m.Reason != "Needs linux" {
+		t.Errorf("load average on windows = %+v", m)
+	}
+	if !win["system.cpu.utilization"].Supported {
+		t.Error("cpu utilization on windows is unsupported")
+	}
+	if m := status("k3")["system.process.count"]; m.Supported || !strings.Contains(m.Reason, "unknown") {
+		t.Errorf("process count with unknown OS = %+v", m)
+	}
+	if code, _ := call(t, s, http.MethodGet, "/targets/nope/metrics", ""); code != http.StatusNotFound {
+		t.Errorf("unknown target = %d", code)
 	}
 }
 
@@ -246,7 +296,7 @@ func TestQuery(t *testing.T) {
 	}}
 	s := newTestServer(t, Deps{Targets: fleet(), Backend: backend})
 
-	code, body := call(t, s, http.MethodPost, "/query", `{"metric":"host.cpu.utilization","selector":{"nsId":"ns01"},
+	code, body := call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","selector":{"nsId":"ns01"},
 		"step":"1m","start":"2026-11-06T00:00:00Z","end":"2026-11-06T01:00:00Z","windowFn":"max","windowRange":"5m",
 		"topK":{"n":3,"desc":true},"fillZero":true}`)
 	if code != http.StatusOK {
@@ -263,20 +313,36 @@ func TestQuery(t *testing.T) {
 		t.Errorf("body =\n%s\nwant\n%s", body, want)
 	}
 
-	if code, _ = call(t, s, http.MethodPost, "/query", `{"metric":"host.cpu.utilization","targetIds":["k2"]}`); code != http.StatusOK ||
+	if code, _ = call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k2"]}`); code != http.StatusOK ||
 		backend.got.Targets[0].EntityID != "k2" {
 		t.Errorf("query by id = %d", code)
+	}
+	backend.series = []monitoring.Series{{Labels: map[string]string{"entity_id": "k1", "cpu_mode": "user"},
+		Points: []monitoring.Point{{T: at, V: 0.25}}}}
+	code, body = call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"],"splitBy":["cpu.mode"],"where":{"cpu.mode":"user"}}`)
+	if code != http.StatusOK || !strings.Contains(body, `"cpu.mode":"user"`) || strings.Contains(body, "cpu_mode") {
+		t.Errorf("split query = %d %s, want the attribute by its OpenTelemetry name", code, body)
+	}
+	if q := backend.got; q.Where["cpu.mode"] != "user" || len(q.SplitBy) != 1 {
+		t.Errorf("split spec sent = %+v", q)
+	}
+	code, _ = call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.load_average.1m","schema":"hostmetrics","targetIds":["k1"]}`)
+	if code != http.StatusOK || backend.got.Metric != "hostmetrics:system.cpu.load_average.1m" {
+		t.Errorf("own field query = %d, metric sent %q", code, backend.got.Metric)
 	}
 	for name, tc := range map[string]struct {
 		body string
 		want int
 	}{
-		"unknown metric":   {`{"metric":"nope","targetIds":["k1"]}`, http.StatusNotFound},
-		"unsupported":      {`{"metric":"host.cpu.user","targetIds":["k1"]}`, http.StatusUnprocessableEntity},
-		"unknown target":   {`{"metric":"host.cpu.utilization","targetIds":["zz"]}`, http.StatusNotFound},
-		"no targets named": {`{"metric":"host.cpu.utilization"}`, http.StatusBadRequest},
-		"bad step":         {`{"metric":"host.cpu.utilization","targetIds":["k1"],"step":"x"}`, http.StatusBadRequest},
-		"graph no range":   {`{"metric":"host.cpu.utilization","targetIds":["k1"],"step":"1m"}`, http.StatusBadRequest},
+		"unknown metric":           {`{"metric":"nope","targetIds":["k1"]}`, http.StatusNotFound},
+		"unsupported":              {`{"metric":"system.paging.operations","targetIds":["k1"]}`, http.StatusUnprocessableEntity},
+		"unknown target":           {`{"metric":"system.cpu.utilization","targetIds":["zz"]}`, http.StatusNotFound},
+		"no targets named":         {`{"metric":"system.cpu.utilization"}`, http.StatusBadRequest},
+		"bad step":                 {`{"metric":"system.cpu.utilization","targetIds":["k1"],"step":"x"}`, http.StatusBadRequest},
+		"graph no range":           {`{"metric":"system.cpu.utilization","targetIds":["k1"],"step":"1m"}`, http.StatusBadRequest},
+		"own field without schema": {`{"metric":"system.cpu.load_average.1m","targetIds":["k1"]}`, http.StatusNotFound},
+		"other attribute":          {`{"metric":"system.cpu.utilization","targetIds":["k1"],"splitBy":["system.memory.state"]}`, http.StatusBadRequest},
+		"no attribute":             {`{"metric":"system.uptime","targetIds":["k1"],"where":{"cpu.mode":"user"}}`, http.StatusBadRequest},
 	} {
 		if code, body := call(t, s, http.MethodPost, "/query", tc.body); code != tc.want {
 			t.Errorf("%s: %d %s, want %d", name, code, body, tc.want)
@@ -284,11 +350,11 @@ func TestQuery(t *testing.T) {
 	}
 
 	backend.err = &promapi.APIError{StatusCode: 422, Type: "execution", Message: "store down"}
-	if code, _ := call(t, s, http.MethodPost, "/query", `{"metric":"host.cpu.utilization","targetIds":["k1"]}`); code != http.StatusBadGateway {
+	if code, _ := call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"]}`); code != http.StatusBadGateway {
 		t.Errorf("backend failure = %d, want 502", code)
 	}
 	backend.err = errors.New("window needs both a function and a positive range")
-	if code, _ := call(t, s, http.MethodPost, "/query", `{"metric":"host.cpu.utilization","targetIds":["k1"]}`); code != http.StatusBadRequest {
+	if code, _ := call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"]}`); code != http.StatusBadRequest {
 		t.Errorf("unbuildable query = %d, want 400", code)
 	}
 }

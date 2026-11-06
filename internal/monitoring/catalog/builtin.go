@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 )
@@ -23,20 +25,20 @@ const (
 	RequiresPhysicalGPU = "physicalGpuMetrics"
 )
 
-// Builtin returns the catalog rows ai-o11y ships with: every field the current
-// host and GPU monitoring collects, with the hostmetrics or GPU exporter
-// expression that reproduces it, or the gap that keeps one from existing yet.
+// Builtin returns the catalog rows ai-o11y ships with. Common fields carry
+// the OpenTelemetry semantic conventions' names (v1.45.0) and meaning and say
+// how the hostmetrics receiver provides them; hostmetrics metrics with no
+// counterpart there are fields of hostmetrics' own.
 func Builtin() []monitoring.MetricRow {
 	var rows []monitoring.MetricRow
 	rows = append(rows, cpuRows()...)
-	rows = append(rows, memRows()...)
-	rows = append(rows, swapRows()...)
+	rows = append(rows, memoryRows()...)
+	rows = append(rows, pagingRows()...)
 	rows = append(rows, diskRows()...)
-	rows = append(rows, diskioRows()...)
-	rows = append(rows, netRows()...)
+	rows = append(rows, filesystemRows()...)
+	rows = append(rows, networkRows()...)
 	rows = append(rows, systemRows()...)
-	rows = append(rows, processesRows()...)
-	rows = append(rows, procstatRows()...)
+	rows = append(rows, processRows()...)
 	rows = append(rows, gpuRows()...)
 	return rows
 }
@@ -44,106 +46,101 @@ func Builtin() []monitoring.MetricRow {
 func hm(expr string) map[string]string { return map[string]string{CollectorHostmetrics: expr} }
 
 // hmReporting is 0 for every target hostmetrics is reporting from: the CPU
-// scraper sends CPU time every scrape. It fills the rows whose hostmetrics
-// series is left out when the value is zero, where the current field sends 0.
+// scraper sends CPU time every scrape. It fills the fields whose hostmetrics
+// series is left out when the value is zero.
 var hmReporting = map[string]string{
 	CollectorHostmetrics: `0 * group by (entity_id) (system_cpu_time_seconds_total{$sel})`,
 }
 
-// cpuShare is the share of CPU time spent in state, across all CPUs. It holds
-// whether or not the collector reports each CPU separately.
-func cpuShare(state string) string {
-	return fmt.Sprintf(`sum by (entity_id) (rate(system_cpu_time_seconds_total{state=%q,$sel}[$range]))`+
-		` / sum by (entity_id) (rate(system_cpu_time_seconds_total{$sel}[$range]))`, state)
+// relabel copies the hostmetrics label from into the attribute label of attr,
+// renaming the values whose OpenTelemetry name differs (rename maps the
+// hostmetrics value to it).
+func relabel(expr, from, attr string, rename map[string]string) string {
+	to := monitoring.AttrLabel(attr)
+	out := fmt.Sprintf(`label_replace(%s, %q, "$1", %q, "(.*)")`, expr, to, from)
+	keys := make([]string, 0, len(rename))
+	for k := range rename {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		out = fmt.Sprintf(`label_replace(%s, %q, %q, %q, %q)`, out, to, rename[k], from, k)
+	}
+	return out
+}
+
+// by joins entity_id with the grouping labels.
+func by(labels ...string) string {
+	return strings.Join(append([]string{"entity_id"}, labels...), ", ")
 }
 
 func cpuRows() []monitoring.MetricRow {
-	row := func(name, state, desc string, requires ...string) monitoring.MetricRow {
-		return monitoring.MetricRow{
-			Name: "host.cpu." + name, Area: "cpu", Unit: "ratio", Kind: monitoring.KindRate,
-			Description: desc, Exprs: hm(cpuShare(state)), Requires: requires,
-		}
-	}
+	const time = `rate(system_cpu_time_seconds_total{$sel}[$range])`
+	total := `sum by (entity_id) (` + time + `)`
+	idle := `sum by (entity_id) (rate(system_cpu_time_seconds_total{state="idle",$sel}[$range]))`
+	mode := monitoring.AttrLabel("cpu.mode")
 	return []monitoring.MetricRow{
 		{
-			Name: "host.cpu.utilization", Area: "cpu", Unit: "ratio", Kind: monitoring.KindRate,
-			Description: "Share of CPU time not idle (current 100 - usage_idle)",
-			Exprs:       hm("1 - (" + cpuShare("idle") + ")"),
+			Name: "system.cpu.utilization", Area: "cpu", Unit: "1", Kind: monitoring.KindRate,
+			Description: "Share of CPU time in each cpu.mode. Without one, the share not idle.",
+			Exprs:       hm("1 - (" + idle + " / " + total + ")"),
+			Attribute: &monitoring.Attribute{Name: "cpu.mode",
+				Values: []string{"user", "system", "nice", "idle", "iowait", "interrupt", "steal", "softirq"}},
+			SplitExprs: hm(`sum by (` + by(mode) + `) (` + relabel(time, "state", "cpu.mode", map[string]string{"wait": "iowait"}) + `)` +
+				` / ignoring (` + mode + `) group_left ` + total),
 		},
 		{
-			Name: "host.cpu.user", Area: "cpu", Unit: "ratio", Kind: monitoring.KindRate,
-			Description: "Share of CPU time in user mode (cpu.usage_user)",
-			Gap:         "cpu.usage_user leaves out time spent running guests; hostmetrics counts it in user and reports no guest time to take it out",
+			Name: "system.cpu.logical.count", Area: "cpu", Unit: "{cpu}", Kind: monitoring.KindGauge,
+			Description: "Logical CPUs.",
+			Exprs:       hm(`max by (entity_id) (system_cpu_logical_count{$sel})`),
 		},
-		row("system", "system", "Share of CPU time in kernel mode (cpu.usage_system)"),
-		row("idle", "idle", "Share of CPU time idle (cpu.usage_idle)"),
 		{
-			Name: "host.cpu.nice", Area: "cpu", Unit: "ratio", Kind: monitoring.KindRate,
-			Description: "Share of CPU time in niced user mode (cpu.usage_nice)",
-			Gap:         "cpu.usage_nice leaves out time spent running niced guests; hostmetrics counts it in nice and reports no guest time to take it out",
+			Name: "system.cpu.physical.count", Area: "cpu", Unit: "{cpu}", Kind: monitoring.KindGauge,
+			Description: "Physical CPUs.",
+			Exprs:       hm(`max by (entity_id) (system_cpu_physical_count{$sel})`),
+			Enables:     []string{"system.cpu.physical.count"},
 		},
-		row("iowait", "wait", "Share of CPU time waiting for I/O (cpu.usage_iowait)", RequiresLinux),
-		row("irq", "interrupt", "Share of CPU time serving hardware interrupts (cpu.usage_irq)"),
-		row("softirq", "softirq", "Share of CPU time serving soft interrupts (cpu.usage_softirq)", RequiresLinux),
-		row("steal", "steal", "Share of CPU time taken by the hypervisor (cpu.usage_steal)", RequiresLinux),
 	}
 }
 
-func memRows() []monitoring.MetricRow {
-	usage := func(state string) string {
-		return fmt.Sprintf(`sum by (entity_id) (system_memory_usage_bytes{state=%q,$sel})`, state)
+func memoryRows() []monitoring.MetricRow {
+	state := monitoring.AttrLabel("system.memory.state")
+	split := func(metric string) string {
+		return `sum by (` + by(state) + `) (` + relabel(metric+`{$sel}`, "state", "system.memory.state",
+			map[string]string{"buffered": "buffers"}) + `)`
 	}
-	row := func(name, state, desc string, requires ...string) monitoring.MetricRow {
-		return monitoring.MetricRow{
-			Name: "host.memory." + name, Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: desc, Exprs: hm(usage(state)), Requires: requires,
-		}
-	}
+	attr := &monitoring.Attribute{Name: "system.memory.state",
+		Values: []string{"used", "free", "buffers", "cached", "inactive", "slab_reclaimable", "slab_unreclaimable"}}
 	return []monitoring.MetricRow{
 		{
-			Name: "host.memory.total", Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Physical memory (mem.total)",
+			Name: "system.memory.usage", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
+			Description: "Memory in each system.memory.state. Without one, memory used.",
+			Exprs:       hm(`sum by (entity_id) (system_memory_usage_bytes{state="used",$sel})`),
+			Attribute:   attr, SplitExprs: hm(split("system_memory_usage_bytes")),
+		},
+		{
+			Name: "system.memory.limit", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
+			Description: "Total memory.",
 			Exprs:       hm(`sum by (entity_id) (system_memory_limit_bytes{$sel})`),
 			Enables:     []string{"system.memory.limit"},
 		},
 		{
-			Name: "host.memory.available", Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Memory available for new work (mem.available)",
+			Name: "system.memory.utilization", Area: "memory", Unit: "1", Kind: monitoring.KindGauge,
+			Description: "Share of memory in each system.memory.state. Without one, the share used.",
+			Exprs:       hm(`sum by (entity_id) (system_memory_utilization_ratio{state="used",$sel})`),
+			Attribute:   attr, SplitExprs: hm(split("system_memory_utilization_ratio")),
+			Enables: []string{"system.memory.utilization"},
+		},
+		{
+			Name: "system.memory.linux.available", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
+			Description: "Memory available for new work (MemAvailable).",
 			Exprs:       hm(`sum by (entity_id) (system_linux_memory_available_bytes{$sel})`),
 			Requires:    []string{RequiresLinux},
 			Enables:     []string{"system.linux.memory.available"},
 		},
 		{
-			Name: "host.memory.available_ratio", Area: "mem", Unit: "ratio", Kind: monitoring.KindGauge,
-			Description: "Available share of physical memory (mem.available_percent)",
-			Exprs: hm(`sum by (entity_id) (system_linux_memory_available_bytes{$sel})` +
-				` / sum by (entity_id) (system_memory_limit_bytes{$sel})`),
-			Requires: []string{RequiresLinux},
-			Enables:  []string{"system.linux.memory.available", "system.memory.limit"},
-		},
-		row("used", "used", "Memory in use (mem.used)"),
-		{
-			Name: "host.memory.utilization", Area: "mem", Unit: "ratio", Kind: monitoring.KindGauge,
-			Description: "Used share of physical memory (mem.used_percent)",
-			Exprs:       hm(`sum by (entity_id) (system_memory_utilization_ratio{state="used",$sel})`),
-			Enables:     []string{"system.memory.utilization"},
-		},
-		row("free", "free", "Free memory (mem.free)"),
-		row("buffered", "buffered", "Memory in kernel buffers (mem.buffered)", RequiresLinux),
-		row("cached", "cached", "Memory in page cache (mem.cached)", RequiresLinux),
-		{
-			Name: "host.memory.inactive", Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Inactive memory (mem.inactive)",
-			Gap:         "hostmetrics reports an inactive memory state on non-Linux hosts only",
-		},
-		{
-			Name: "host.memory.active", Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Active memory (mem.active)",
-			Gap:         "hostmetrics has no active memory state",
-		},
-		{
-			Name: "host.memory.shared", Area: "mem", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Shared memory (mem.shared)",
+			Name: "system.memory.linux.shared", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
+			Description: "Shared memory (Shmem).",
 			Exprs:       hm(`sum by (entity_id) (system_memory_linux_shared_bytes{$sel})`),
 			Requires:    []string{RequiresLinux},
 			Enables:     []string{"system.memory.linux.shared"},
@@ -151,205 +148,176 @@ func memRows() []monitoring.MetricRow {
 	}
 }
 
-func swapRows() []monitoring.MetricRow {
-	total := `sum by (entity_id) (system_paging_usage_bytes{$sel})`
-	state := func(s string) string {
-		return fmt.Sprintf(`sum by (entity_id) (system_paging_usage_bytes{state=%q,$sel})`, s)
-	}
-	pages := func(direction string) string {
-		return fmt.Sprintf(`sum by (entity_id) (rate(system_paging_operations_total{direction=%q,type="major",$sel}[$range]))`, direction)
-	}
-	// hostmetrics sends no swap series on a host without swap, where the
-	// current fields send 0.
+func pagingRows() []monitoring.MetricRow {
+	const usage = "system_paging_usage_bytes"
+	state := monitoring.AttrLabel("system.paging.state")
+	total := `sum by (entity_id) (` + usage + `{$sel})`
+	byState := `sum by (` + by(state) + `) (` + relabel(usage+`{$sel}`, "state", "system.paging.state", nil) + `)`
+	attr := &monitoring.Attribute{Name: "system.paging.state", Values: []string{"used", "free", "cached"}}
+	faultType := monitoring.AttrLabel("system.paging.fault.type")
+	faults := `rate(system_paging_faults_total{$sel}[$range])`
+	// hostmetrics sends no paging usage on a host without swap.
 	return []monitoring.MetricRow{
-		{Name: "host.swap.total", Area: "swap", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Swap space (swap.total)", Exprs: hm(total), ZeroFill: hmReporting},
-		{Name: "host.swap.used", Area: "swap", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Swap in use (swap.used)", Exprs: hm(state("used")), ZeroFill: hmReporting},
-		{Name: "host.swap.free", Area: "swap", Unit: "bytes", Kind: monitoring.KindGauge,
-			Description: "Free swap (swap.free)", Exprs: hm(state("free")), ZeroFill: hmReporting},
-		{Name: "host.swap.utilization", Area: "swap", Unit: "ratio", Kind: monitoring.KindGauge,
-			Description: "Used share of swap (swap.used_percent)", Exprs: hm(state("used") + " / " + total), ZeroFill: hmReporting},
-		// On Linux the major paging operations are the bytes swapped
-		// (gopsutil Sin/Sout, pages x page size), the counters swap.in and
-		// swap.out read.
-		{Name: "host.swap.in", Area: "swap", Unit: "bytes/s", Kind: monitoring.KindRate,
-			Description: "Bytes swapped in (swap.in)", Exprs: hm(pages("page_in"))},
-		{Name: "host.swap.out", Area: "swap", Unit: "bytes/s", Kind: monitoring.KindRate,
-			Description: "Bytes swapped out (swap.out)", Exprs: hm(pages("page_out"))},
+		{
+			Name: "system.paging.usage", Area: "paging", Unit: "By", Kind: monitoring.KindGauge,
+			Description: "Swap space in each system.paging.state. Without one, swap used.",
+			Exprs:       hm(`sum by (entity_id) (` + usage + `{state="used",$sel})`),
+			Attribute:   attr, SplitExprs: hm(byState), ZeroFill: hmReporting,
+		},
+		{
+			Name: "system.paging.utilization", Area: "paging", Unit: "1", Kind: monitoring.KindGauge,
+			Description: "Share of swap space in each system.paging.state. Without one, the share used.",
+			Exprs:       hm(`sum by (entity_id) (` + usage + `{state="used",$sel}) / ` + total),
+			Attribute:   attr, SplitExprs: hm(byState + ` / ignoring (` + state + `) group_left ` + total),
+			ZeroFill: hmReporting,
+		},
+		{
+			Name: "system.paging.faults", Area: "paging", Unit: "{fault}/s", Kind: monitoring.KindRate,
+			Description: "Page faults of each system.paging.fault.type. Without one, all page faults.",
+			Exprs:       hm(`sum by (entity_id) (` + faults + `)`),
+			Attribute:   &monitoring.Attribute{Name: "system.paging.fault.type", Values: []string{"major", "minor"}},
+			SplitExprs:  hm(`sum by (` + by(faultType) + `) (` + relabel(faults, "type", "system.paging.fault.type", nil) + `)`),
+		},
+		{
+			Name: "system.paging.operations", Area: "paging", Unit: "{operation}/s", Kind: monitoring.KindRate,
+			Description: "Paging operations.",
+			Gap:         "hostmetrics reports the bytes swapped as its major paging operations on Linux, not a count of operations",
+		},
+	}
+}
+
+// directionSplit is a rate field split by a direction attribute that
+// hostmetrics carries in its direction label with the same values.
+func directionSplit(name, area, unit, desc, metric, dim, dimName, attr string, values []string) monitoring.MetricRow {
+	r := fmt.Sprintf(`rate(%s{$sel}[$range])`, metric)
+	return monitoring.MetricRow{
+		Name: name, Area: area, Unit: unit, Kind: monitoring.KindRate, Description: desc,
+		Exprs:     hm(`sum by (` + by(dim) + `) (` + r + `)`),
+		Attribute: &monitoring.Attribute{Name: attr, Values: values},
+		SplitExprs: hm(`sum by (` + by(dim, monitoring.AttrLabel(attr)) + `) (` +
+			relabel(r, "direction", attr, nil) + `)`),
+		Dimension: dim, DimensionName: dimName,
 	}
 }
 
 func diskRows() []monitoring.MetricRow {
-	const by = "entity_id, mountpoint"
-	sum := func(metric, state string) string {
-		if state == "" {
-			return fmt.Sprintf(`sum by (%s) (%s{$sel})`, by, metric)
-		}
-		return fmt.Sprintf(`sum by (%s) (%s{state=%q,$sel})`, by, metric, state)
-	}
-	const usage, inodes = "system_filesystem_usage_bytes", "system_filesystem_inodes_usage"
-	row := func(name, unit, desc, expr string, requires ...string) monitoring.MetricRow {
-		return monitoring.MetricRow{
-			Name: "host.filesystem." + name, Area: "disk", Unit: unit, Kind: monitoring.KindGauge,
-			Description: desc, Exprs: hm(expr), Dimension: "mountpoint", Requires: requires,
-		}
-	}
+	rw := []string{"read", "write"}
+	const dev, devName, dir = "device", "system.device.name", "disk.io.direction"
 	return []monitoring.MetricRow{
-		row("total", "bytes", "File system size (disk.total)", sum(usage, "")),
-		row("free", "bytes", "Free space (disk.free)", sum(usage, "free")),
-		row("used", "bytes", "Used space (disk.used)", sum(usage, "used")),
-		// disk.used_percent is used / (used + free): space reserved for root
-		// counts toward neither, so it is left out of the share too.
-		row("utilization", "ratio", "Used share of the file system (disk.used_percent)",
-			sum(usage, "used")+" / ("+sum(usage, "used")+" + "+sum(usage, "free")+")"),
-		row("inodes.total", "inodes", "Inodes (disk.inodes_total)", sum(inodes, ""), RequiresLinux),
-		row("inodes.free", "inodes", "Free inodes (disk.inodes_free)", sum(inodes, "free"), RequiresLinux),
-		row("inodes.used", "inodes", "Used inodes (disk.inodes_used)", sum(inodes, "used"), RequiresLinux),
-		row("inodes.utilization", "ratio", "Used share of inodes (disk.inodes_used_percent)", sum(inodes, "used")+" / "+sum(inodes, ""), RequiresLinux),
-	}
-}
-
-func diskioRows() []monitoring.MetricRow {
-	const by = "entity_id, device"
-	rate := func(metric, direction string) string {
-		if direction == "" {
-			return fmt.Sprintf(`sum by (%s) (rate(%s{$sel}[$range]))`, by, metric)
-		}
-		return fmt.Sprintf(`sum by (%s) (rate(%s{direction=%q,$sel}[$range]))`, by, metric, direction)
-	}
-	const ops, io, opTime, ioTime = "system_disk_operations_total", "system_disk_io_bytes_total",
-		"system_disk_operation_time_seconds_total", "system_disk_io_time_seconds_total"
-	row := func(name, unit, desc, expr string) monitoring.MetricRow {
-		return monitoring.MetricRow{
-			Name: "host.disk." + name, Area: "diskio", Unit: unit, Kind: monitoring.KindRate,
-			Description: desc, Exprs: hm(expr), Dimension: "device",
-		}
-	}
-	return []monitoring.MetricRow{
-		row("reads", "ops/s", "Completed reads (diskio.reads)", rate(ops, "read")),
-		row("writes", "ops/s", "Completed writes (diskio.writes)", rate(ops, "write")),
-		row("read_bytes", "bytes/s", "Bytes read (diskio.read_bytes)", rate(io, "read")),
-		row("write_bytes", "bytes/s", "Bytes written (diskio.write_bytes)", rate(io, "write")),
-		row("read_time", "s/s", "Time spent reading (diskio.read_time)", rate(opTime, "read")),
-		row("write_time", "s/s", "Time spent writing (diskio.write_time)", rate(opTime, "write")),
-		row("io_time", "s/s", "Time the device was busy (diskio.io_time)", rate(ioTime, "")),
+		directionSplit("system.disk.io", "disk", "By/s", "Bytes read and written. Without disk.io.direction, both.",
+			"system_disk_io_bytes_total", dev, devName, dir, rw),
+		directionSplit("system.disk.operations", "disk", "{operation}/s", "Completed reads and writes. Without disk.io.direction, both.",
+			"system_disk_operations_total", dev, devName, dir, rw),
+		directionSplit("system.disk.operation_time", "disk", "s/s", "Time spent in reads and writes. Without disk.io.direction, both.",
+			"system_disk_operation_time_seconds_total", dev, devName, dir, rw),
+		directionSplit("system.disk.merged", "disk", "{operation}/s", "Merged reads and writes. Without disk.io.direction, both.",
+			"system_disk_merged_total", dev, devName, dir, rw),
 		{
-			Name: "host.disk.pending_operations", Area: "diskio", Unit: "operations", Kind: monitoring.KindGauge,
-			Description: "I/O in progress (diskio.iops_in_progress)",
-			Exprs:       hm(`sum by (entity_id, device) (system_disk_pending_operations{$sel})`), Dimension: "device",
+			Name: "system.disk.io_time", Area: "disk", Unit: "s/s", Kind: monitoring.KindRate,
+			Description: "Time the device was busy, per second: its busy share.",
+			Exprs:       hm(`sum by (entity_id, device) (rate(system_disk_io_time_seconds_total{$sel}[$range]))`),
+			Dimension:   dev, DimensionName: devName,
 		},
-		row("utilization", "ratio", "Busy share of the device (diskio.io_util)", rate(ioTime, "")),
-		row("await", "s", "Average time per I/O, queueing included (diskio.io_await)", rate(opTime, "")+" / "+rate(ops, "")),
-		row("svctm", "s", "Average service time per I/O (diskio.io_svctm)", rate(ioTime, "")+" / "+rate(ops, "")),
+		{
+			Name: "system.disk.pending_operations", Schema: CollectorHostmetrics, Area: "disk", Unit: "{operation}",
+			Kind: monitoring.KindGauge, Description: "I/O operations in progress.",
+			Exprs:     hm(`sum by (entity_id, device) (system_disk_pending_operations{$sel})`),
+			Dimension: dev, DimensionName: "device",
+		},
 	}
 }
 
-func netRows() []monitoring.MetricRow {
-	rate := func(metric, direction string) string {
-		return fmt.Sprintf(`sum by (entity_id, device) (rate(%s{direction=%q,$sel}[$range]))`, metric, direction)
-	}
-	row := func(name, unit, metric, direction, field string) monitoring.MetricRow {
-		return monitoring.MetricRow{
-			Name: "host.network." + name, Area: "net", Unit: unit, Kind: monitoring.KindRate,
-			Description: fmt.Sprintf("%s (net.%s)", name, field),
-			Exprs:       hm(rate(metric, direction)), Dimension: "device",
-		}
-	}
+func filesystemRows() []monitoring.MetricRow {
+	const usage, mnt, mntName = "system_filesystem_usage_bytes", "mountpoint", "system.filesystem.mountpoint"
+	state := monitoring.AttrLabel("system.filesystem.state")
+	limit := `sum by (entity_id, mountpoint) (` + usage + `{$sel})`
+	byState := `sum by (` + by(mnt, state) + `) (` + relabel(usage+`{$sel}`, "state", "system.filesystem.state", nil) + `)`
+	used := `sum by (entity_id, mountpoint) (` + usage + `{state="used",$sel})`
+	attr := &monitoring.Attribute{Name: "system.filesystem.state", Values: []string{"used", "free", "reserved"}}
 	return []monitoring.MetricRow{
-		row("transmit_bytes", "bytes/s", "system_network_io_bytes_total", "transmit", "bytes_sent"),
-		row("receive_bytes", "bytes/s", "system_network_io_bytes_total", "receive", "bytes_recv"),
-		row("transmit_packets", "packets/s", "system_network_packets_total", "transmit", "packets_sent"),
-		row("receive_packets", "packets/s", "system_network_packets_total", "receive", "packets_recv"),
-		row("transmit_errors", "errors/s", "system_network_errors_total", "transmit", "err_out"),
-		row("receive_errors", "errors/s", "system_network_errors_total", "receive", "err_in"),
-		row("transmit_dropped", "packets/s", "system_network_dropped_total", "transmit", "drop_out"),
-		row("receive_dropped", "packets/s", "system_network_dropped_total", "receive", "drop_in"),
+		{
+			Name: "system.filesystem.usage", Area: "filesystem", Unit: "By", Kind: monitoring.KindGauge,
+			Description: "Space in each system.filesystem.state. Without one, space used.",
+			Exprs:       hm(used), Attribute: attr, SplitExprs: hm(byState),
+			Dimension: mnt, DimensionName: mntName,
+		},
+		{
+			Name: "system.filesystem.limit", Area: "filesystem", Unit: "By", Kind: monitoring.KindGauge,
+			Description: "File system size, reserved space included.",
+			Exprs:       hm(limit), Dimension: mnt, DimensionName: mntName,
+		},
+		{
+			Name: "system.filesystem.utilization", Area: "filesystem", Unit: "1", Kind: monitoring.KindGauge,
+			Description: "Share of the file system size in each system.filesystem.state. Without one, the share used.",
+			Exprs:       hm(used + " / " + limit), Attribute: attr,
+			SplitExprs: hm(byState + ` / ignoring (` + state + `) group_left ` + limit),
+			Dimension:  mnt, DimensionName: mntName,
+		},
+		{
+			Name: "system.filesystem.inodes.usage", Schema: CollectorHostmetrics, Area: "filesystem", Unit: "{inode}",
+			Kind: monitoring.KindGauge, Description: "Inodes in each state. Without one, inodes used.",
+			Exprs:      hm(`sum by (entity_id, mountpoint) (system_filesystem_inodes_usage{state="used",$sel})`),
+			Attribute:  &monitoring.Attribute{Name: "state", Values: []string{"used", "free"}},
+			SplitExprs: hm(`sum by (entity_id, mountpoint, state) (system_filesystem_inodes_usage{$sel})`),
+			Dimension:  mnt, DimensionName: mnt, Requires: []string{RequiresLinux},
+		},
+	}
+}
+
+func networkRows() []monitoring.MetricRow {
+	tr := []string{"transmit", "receive"}
+	const dev, ifName, dir = "device", "network.interface.name", "network.io.direction"
+	return []monitoring.MetricRow{
+		directionSplit("system.network.io", "network", "By/s", "Bytes sent and received. Without network.io.direction, both.",
+			"system_network_io_bytes_total", dev, ifName, dir, tr),
+		directionSplit("system.network.packet.count", "network", "{packet}/s", "Packets sent and received. Without network.io.direction, both.",
+			"system_network_packets_total", dev, "system.device.name", dir, tr),
+		directionSplit("system.network.errors", "network", "{error}/s", "Errors sending and receiving. Without network.io.direction, both.",
+			"system_network_errors_total", dev, ifName, dir, tr),
+		directionSplit("system.network.packet.dropped", "network", "{packet}/s", "Packets dropped. Without network.io.direction, both.",
+			"system_network_dropped_total", dev, ifName, dir, tr),
 	}
 }
 
 func systemRows() []monitoring.MetricRow {
-	gauge := func(name, unit, desc, expr string) monitoring.MetricRow {
+	load := func(window string) monitoring.MetricRow {
 		return monitoring.MetricRow{
-			Name: "host." + name, Area: "system", Unit: unit, Kind: monitoring.KindGauge,
-			Description: desc, Exprs: hm(expr),
-		}
-	}
-	load := func(window, field string) monitoring.MetricRow {
-		// On Windows the collector synthesises load from the processor queue
-		// length, so it does not compare with Linux load.
-		return gauge("load"+window, "threads", "Load average over "+window+" (system."+field+")",
-			fmt.Sprintf(`max by (entity_id) (system_cpu_load_average_%s{$sel})`, window))
-	}
-	physical := gauge("cpu.physical_count", "cpus", "Physical CPUs (system.n_physical_cpus)",
-		`max by (entity_id) (system_cpu_physical_count{$sel})`)
-	physical.Enables = []string{"system.cpu.physical.count"}
-	return []monitoring.MetricRow{
-		load("1m", "load1"),
-		load("5m", "load5"),
-		load("15m", "load15"),
-		gauge("cpu.logical_count", "cpus", "Logical CPUs (system.n_cpus)", `max by (entity_id) (system_cpu_logical_count{$sel})`),
-		physical,
-		gauge("uptime", "s", "Time since boot (system.uptime)", `max by (entity_id) (system_uptime_seconds{$sel})`),
-		{Name: "host.users", Area: "system", Unit: "users", Kind: monitoring.KindGauge,
-			Description: "Logged-in users (system.n_users)", Gap: "hostmetrics has no logged-in user count"},
-		{Name: "host.unique_users", Area: "system", Unit: "users", Kind: monitoring.KindGauge,
-			Description: "Distinct logged-in users (system.n_unique_users)", Gap: "hostmetrics has no logged-in user count"},
-	}
-}
-
-func processesRows() []monitoring.MetricRow {
-	// status is the row for the processes in hostmetrics status s, which the
-	// current field counts.
-	status := func(name, s, field string) monitoring.MetricRow {
-		return monitoring.MetricRow{
-			Name: "host.processes." + name, Area: "processes", Unit: "processes", Kind: monitoring.KindGauge,
-			Description: fmt.Sprintf("Processes %s (processes.%s)", name, field),
-			Exprs:       hm(fmt.Sprintf(`sum by (entity_id) (system_processes_count{status=%q,$sel})`, s)),
-			Requires:    []string{RequiresLinux},
-			// hostmetrics leaves a status with no processes out.
-			ZeroFill: hmReporting,
-		}
-	}
-	gap := func(name string) monitoring.MetricRow {
-		return monitoring.MetricRow{
-			Name: "host.processes." + name, Area: "processes", Unit: "processes", Kind: monitoring.KindGauge,
-			Description: fmt.Sprintf("Processes %s (processes.%s)", name, name),
-			Gap:         "hostmetrics has no " + name + " process status",
+			Name: "system.cpu.load_average." + window, Schema: CollectorHostmetrics, Area: "system", Unit: "{thread}",
+			Kind: monitoring.KindGauge, Description: "Load average over " + window + ".",
+			Exprs:    hm(fmt.Sprintf(`max by (entity_id) (system_cpu_load_average_%s{$sel})`, window)),
+			Requires: []string{RequiresLinux},
 		}
 	}
 	return []monitoring.MetricRow{
 		{
-			Name: "host.processes.total", Area: "processes", Unit: "processes", Kind: monitoring.KindGauge,
-			Description: "All processes (processes.total)",
-			Gap:         "hostmetrics has no process total; summing its statuses mixes in the running and blocked counts below",
+			Name: "system.uptime", Area: "system", Unit: "s", Kind: monitoring.KindGauge,
+			Description: "Time since boot.",
+			Exprs:       hm(`max by (entity_id) (system_uptime_seconds{$sel})`),
 		},
-		{
-			Name: "host.processes.running", Area: "processes", Unit: "processes", Kind: monitoring.KindGauge,
-			Description: "Processes running (processes.running)",
-			Gap:         "processes.running counts processes in state R; hostmetrics reports the kernel's procs_running from /proc/stat instead",
-		},
-		{
-			Name: "host.processes.blocked", Area: "processes", Unit: "processes", Kind: monitoring.KindGauge,
-			Description: "Processes blocked (processes.blocked)",
-			Gap:         "processes.blocked counts processes in state D; hostmetrics reports the kernel's procs_blocked from /proc/stat instead",
-		},
-		status("sleeping", "sleeping", "sleeping"),
-		status("stopped", "stopped", "stopped"),
-		status("zombie", "zombies", "zombies"),
-		status("idle", "idle", "idle"),
-		gap("dead"),
-		gap("parked"),
+		load("1m"), load("5m"), load("15m"),
 	}
 }
 
-func procstatRows() []monitoring.MetricRow {
+func processRows() []monitoring.MetricRow {
+	pstate := monitoring.AttrLabel("process.state")
 	const gap = "per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name)"
 	return []monitoring.MetricRow{
-		{Name: "process.cpu.utilization", Area: "procstat", Unit: "ratio", Kind: monitoring.KindRate,
-			Description: "CPU use of a top process, one core = 1 (procstat.cpu_usage)", Dimension: "process", Gap: gap},
-		{Name: "process.memory.utilization", Area: "procstat", Unit: "ratio", Kind: monitoring.KindGauge,
-			Description: "Memory share of a top process (procstat.memory_usage)", Dimension: "process", Gap: gap},
+		{
+			Name: "system.process.count", Area: "process", Unit: "{process}", Kind: monitoring.KindGauge,
+			Description: "Processes in each process.state. Without one, all processes.",
+			Exprs:       hm(`sum by (entity_id) (system_processes_count{$sel})`),
+			Attribute: &monitoring.Attribute{Name: "process.state",
+				Values: []string{"running", "sleeping", "stopped", "defunct", "blocked", "idle"}},
+			SplitExprs: hm(`sum by (` + by(pstate) + `) (` + relabel(`system_processes_count{$sel}`, "status", "process.state",
+				map[string]string{"zombies": "defunct"}) + `)`),
+			Requires: []string{RequiresLinux},
+			// hostmetrics leaves a status with no processes out.
+			ZeroFill: hmReporting,
+		},
+		{Name: "process.cpu.utilization", Area: "process", Unit: "1", Kind: monitoring.KindRate,
+			Description: "CPU use of a process, one core = 1.", Dimension: "process", DimensionName: "process.executable.name", Gap: gap},
+		{Name: "process.memory.utilization", Area: "process", Unit: "1", Kind: monitoring.KindGauge,
+			Description: "Memory share of a process.", Dimension: "process", DimensionName: "process.executable.name", Gap: gap},
 	}
 }
 

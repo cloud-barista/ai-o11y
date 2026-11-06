@@ -6,11 +6,19 @@ import "time"
 // targetIds, or else every target matching selector; an empty selector ({})
 // means every target. Durations are Go durations such as "5m" or "1h".
 type QueryReq struct {
-	Metric    string            `json:"metric" example:"host.cpu.utilization"`
+	// Metric and Schema name the catalog field (see GET /metrics); Schema is
+	// empty for a common field.
+	Metric    string            `json:"metric" example:"system.cpu.utilization"`
+	Schema    string            `json:"schema,omitempty" example:""`
 	TargetIDs []string          `json:"targetIds,omitempty"`
 	Selector  map[string]string `json:"selector,omitempty"`
-	// Within collapses the metric's dimension (devices, GPUs) inside each
-	// target with fn: avg, min, max, sum or count.
+	// Where keeps the value of the field's attribute, such as
+	// {"cpu.mode": "user"}; SplitBy gives one series per value of it, such as
+	// ["cpu.mode"]. Without either the field answers its default value.
+	Where   map[string]string `json:"where,omitempty"`
+	SplitBy []string          `json:"splitBy,omitempty"`
+	// Within collapses the field's dimension (devices, mount points) inside
+	// each target with fn: avg, min, max, sum or count.
 	Within string `json:"within,omitempty" example:""`
 	// Window aggregates each series over the last windowRange with
 	// windowFn: avg, min, max, sum, count or last.
@@ -21,7 +29,7 @@ type QueryReq struct {
 	Step  string    `json:"step,omitempty" example:"1m"`
 	Start time.Time `json:"start,omitempty"`
 	End   time.Time `json:"end,omitempty"`
-	// Across combines the targets with fn, keeping the groupBy labels.
+	// Across combines the targets with fn, keeping the groupBy attributes.
 	Across  string   `json:"across,omitempty" example:""`
 	GroupBy []string `json:"groupBy,omitempty"`
 	TopK    *TopKReq `json:"topK,omitempty"`
@@ -47,6 +55,8 @@ type QueryResp struct {
 
 // SeriesInfo is one result series.
 type SeriesInfo struct {
+	// Labels are entity_id and the attributes the series is split by, by
+	// their OpenTelemetry names.
 	Labels map[string]string `json:"labels"`
 	Points []PointInfo       `json:"points"`
 }

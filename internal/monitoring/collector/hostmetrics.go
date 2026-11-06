@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
+	"github.com/prometheus/prometheus/promql/parser"
 	"strings"
 	"time"
 
@@ -45,8 +45,27 @@ var scraperPrefixes = []struct{ prefix, scraper string }{
 	{"process_", "process"},
 }
 
-// metricNameRE finds hostmetrics series names in a PromQL expression.
-var metricNameRE = regexp.MustCompile(`\b(?:system|process)_[a-z0-9_]+`)
+// metricNames returns the names of the series a catalog expression selects.
+// It parses the expression, so label names such as process_state are not
+// taken for series.
+func metricNames(expr string) ([]string, error) {
+	filled := strings.NewReplacer(
+		monitoring.PlaceholderSelector, `entity_id="x"`,
+		monitoring.PlaceholderRange, "1m",
+	).Replace(expr)
+	node, err := parser.NewParser(parser.Options{}).ParseExpr(filled)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	parser.Inspect(node, func(n parser.Node, _ []parser.Node) error {
+		if vs, ok := n.(*parser.VectorSelector); ok && vs.Name != "" {
+			names = append(names, vs.Name)
+		}
+		return nil
+	})
+	return names, nil
+}
 
 func normalize(name string) string { return strings.ReplaceAll(name, ".", "_") }
 
@@ -72,6 +91,9 @@ var _ monitoring.CollectorKind = Hostmetrics{}
 // Path implements monitoring.CollectorKind.
 func (Hostmetrics) Path() monitoring.Path { return monitoring.PathAgent }
 
+// Name implements monitoring.CollectorKind.
+func (Hostmetrics) Name() string { return catalog.CollectorHostmetrics }
+
 // AppliesTo implements monitoring.CollectorKind: every VM runs hostmetrics.
 func (Hostmetrics) AppliesTo(t monitoring.Target) bool { return t.Kind == "vm" }
 
@@ -89,7 +111,18 @@ func (h Hostmetrics) Render(t monitoring.Target, c monitoring.MetricCatalog) (mo
 		if !ok || row.Gap != "" {
 			continue
 		}
-		for _, name := range metricNameRE.FindAllString(expr+" "+row.ZeroFill[catalog.CollectorHostmetrics], -1) {
+		var names []string
+		for _, e := range []string{expr, row.SplitExprs[catalog.CollectorHostmetrics], row.ZeroFill[catalog.CollectorHostmetrics]} {
+			if e == "" {
+				continue
+			}
+			found, err := metricNames(e)
+			if err != nil {
+				return monitoring.ConfigFragment{}, fmt.Errorf("catalog row %s: %w", row.ID(), err)
+			}
+			names = append(names, found...)
+		}
+		for _, name := range names {
 			s, err := scraperOf(name)
 			if err != nil {
 				return monitoring.ConfigFragment{}, fmt.Errorf("catalog row %s: %w", row.Name, err)

@@ -20,16 +20,22 @@ func TestBuiltinIsValid(t *testing.T) {
 	for _, r := range c.Rows() {
 		areas[r.Area]++
 	}
-	for _, area := range []string{"cpu", "mem", "swap", "disk", "diskio", "net", "system", "processes", "procstat", "gpu"} {
+	for _, area := range []string{"cpu", "memory", "paging", "disk", "filesystem", "network", "system", "process", "gpu"} {
 		if areas[area] == 0 {
 			t.Errorf("no rows for area %q", area)
 		}
 	}
 
-	if _, err := c.Lookup("host.cpu.utilization"); err != nil {
-		t.Fatalf("Lookup: %v", err)
+	if _, err := c.Lookup("system.cpu.utilization"); err != nil {
+		t.Fatalf("Lookup common field: %v", err)
 	}
-	if _, err := c.Lookup("host.cpu.nope"); err == nil {
+	if _, err := c.Lookup("hostmetrics:system.cpu.load_average.1m"); err != nil {
+		t.Fatalf("Lookup hostmetrics field: %v", err)
+	}
+	if _, err := c.Lookup("system.cpu.load_average.1m"); err == nil {
+		t.Fatal("Lookup of a collector's own field without its schema succeeded")
+	}
+	if _, err := c.Lookup("system.cpu.nope"); err == nil {
 		t.Fatal("Lookup of an unknown metric succeeded")
 	}
 }
@@ -43,9 +49,11 @@ func TestBuiltinExpressionsParse(t *testing.T) {
 	)
 	p := parser.NewParser(parser.Options{})
 	for _, row := range Builtin() {
-		for collector, expr := range row.Exprs {
-			if _, err := p.ParseExpr(r.Replace(expr)); err != nil {
-				t.Errorf("%s (%s): %v\n%s", row.Name, collector, err, expr)
+		for _, exprs := range []map[string]string{row.Exprs, row.SplitExprs, row.ZeroFill} {
+			for collector, expr := range exprs {
+				if _, err := p.ParseExpr(r.Replace(expr)); err != nil {
+					t.Errorf("%s (%s): %v\n%s", row.ID(), collector, err, expr)
+				}
 			}
 		}
 	}
@@ -73,6 +81,17 @@ func TestNewRejects(t *testing.T) {
 		"zero fill without selector": func(r *monitoring.MetricRow) {
 			r.ZeroFill = map[string]string{"hostmetrics": `0 * group by (entity_id) (m)`}
 		},
+		"attribute without split": func(r *monitoring.MetricRow) {
+			r.Attribute = &monitoring.Attribute{Name: "cpu.mode"}
+		},
+		"split without attribute": func(r *monitoring.MetricRow) {
+			r.SplitExprs = map[string]string{"hostmetrics": `max by (entity_id, cpu_mode) (m{$sel})`}
+		},
+		"split loses the attribute": func(r *monitoring.MetricRow) {
+			r.Attribute = &monitoring.Attribute{Name: "cpu.mode"}
+			r.SplitExprs = map[string]string{"hostmetrics": `max by (entity_id) (m{$sel})`}
+		},
+		"dimension without name": func(r *monitoring.MetricRow) { r.Dimension = "device" },
 		"zero fill with range": func(r *monitoring.MetricRow) {
 			r.ZeroFill = map[string]string{"hostmetrics": `0 * group by (entity_id) (rate(m{$sel}[$range]))`}
 		},
@@ -86,5 +105,10 @@ func TestNewRejects(t *testing.T) {
 
 	if _, err := New([]monitoring.MetricRow{ok, ok}); err == nil {
 		t.Error("duplicate name: New succeeded")
+	}
+	own := ok
+	own.Schema = "hostmetrics"
+	if _, err := New([]monitoring.MetricRow{ok, own}); err != nil {
+		t.Errorf("a common field and a collector's own field may share a name: %v", err)
 	}
 }

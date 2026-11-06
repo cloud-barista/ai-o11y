@@ -36,7 +36,8 @@ func TestFillZero(t *testing.T) {
 		}
 		return out
 	}
-	q := monitoring.QuerySpec{Metric: "host.processes.zombie", Targets: targets("a", "b", "c")}
+	q := monitoring.QuerySpec{Metric: "system.process.count", Targets: targets("a", "b", "c"),
+		Where: map[string]string{"process.state": "defunct"}}
 
 	if got := values(q); len(got) != 1 || got["a"] != 2 {
 		t.Errorf("without FillZero = %v, want only a=2", got)
@@ -52,7 +53,7 @@ func TestFillZero(t *testing.T) {
 	}
 
 	// A metric without a zero fill is unchanged by the option.
-	plain := monitoring.QuerySpec{Metric: "host.cpu.utilization", Targets: targets("a", "c"), FillZero: true}
+	plain := monitoring.QuerySpec{Metric: "system.cpu.utilization", Targets: targets("a", "c"), FillZero: true}
 	if got := values(plain); len(got) != 1 {
 		t.Errorf("FillZero on a metric without zero fill = %v, want only a", got)
 	}

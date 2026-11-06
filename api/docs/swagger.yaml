@@ -1,15 +1,31 @@
 basePath: /aio11y
 definitions:
+  model.AttributeInfo:
+    properties:
+      name:
+        example: cpu.mode
+        type: string
+      values:
+        items:
+          type: string
+        type: array
+    type: object
   model.MetricInfo:
     properties:
       area:
         example: cpu
         type: string
+      attribute:
+        allOf:
+        - $ref: '#/definitions/model.AttributeInfo'
+        description: 'Attribute splits the field: a query names it in where or splitBy.'
       description:
-        example: Share of CPU time not idle (current 100 - usage_idle)
+        example: Share of CPU time in each cpu.mode. Without one, the share not idle.
         type: string
       dimension:
-        description: Dimension splits the metric within a target, such as "device".
+        description: |-
+          Dimension is the attribute that splits the field within a target, such
+          as system.device.name; within collapses it.
         example: ""
         type: string
       gap:
@@ -23,22 +39,25 @@ definitions:
         example: rate
         type: string
       name:
-        example: host.cpu.utilization
+        example: system.cpu.utilization
         type: string
       requires:
-        description: Requires lists what a target needs to have the metric, such as
+        description: Requires lists what a target needs to have the field, such as
           "os:linux".
         items:
           type: string
         type: array
+      schema:
+        description: Schema is empty for a common field and names the collector otherwise.
+        example: ""
+        type: string
       supported:
-        description: |-
-          Supported is false when no collector produces the metric as the current
-          field means it; Gap says why.
+        description: Supported is false when no collector provides the field yet;
+          Gap says why.
         example: true
         type: boolean
       unit:
-        example: ratio
+        example: "1"
         type: string
       zeroFill:
         description: ZeroFill is true when a query can take a missing value as 0 (fillZero).
@@ -62,7 +81,7 @@ definitions:
   model.QueryReq:
     properties:
       across:
-        description: Across combines the targets with fn, keeping the groupBy labels.
+        description: Across combines the targets with fn, keeping the groupBy attributes.
         example: ""
         type: string
       end:
@@ -78,12 +97,22 @@ definitions:
           type: string
         type: array
       metric:
-        example: host.cpu.utilization
+        description: |-
+          Metric and Schema name the catalog field (see GET /metrics); Schema is
+          empty for a common field.
+        example: system.cpu.utilization
+        type: string
+      schema:
+        example: ""
         type: string
       selector:
         additionalProperties:
           type: string
         type: object
+      splitBy:
+        items:
+          type: string
+        type: array
       start:
         type: string
       step:
@@ -98,6 +127,14 @@ definitions:
         type: array
       topK:
         $ref: '#/definitions/model.TopKReq'
+      where:
+        additionalProperties:
+          type: string
+        description: |-
+          Where keeps the value of the field's attribute, such as
+          {"cpu.mode": "user"}; SplitBy gives one series per value of it, such as
+          ["cpu.mode"]. Without either the field answers its default value.
+        type: object
       windowFn:
         description: |-
           Window aggregates each series over the last windowRange with
@@ -109,8 +146,8 @@ definitions:
         type: string
       within:
         description: |-
-          Within collapses the metric's dimension (devices, GPUs) inside each
-          target with fn: avg, min, max, sum or count.
+          Within collapses the field's dimension (devices, mount points) inside
+          each target with fn: avg, min, max, sum or count.
         example: ""
         type: string
     type: object
@@ -132,6 +169,9 @@ definitions:
       labels:
         additionalProperties:
           type: string
+        description: |-
+          Labels are entity_id and the attributes the series is split by, by
+          their OpenTelemetry names.
         type: object
       points:
         items:
@@ -186,6 +226,44 @@ definitions:
         items:
           $ref: '#/definitions/model.TargetInfo'
         type: array
+    type: object
+  model.TargetMetricInfo:
+    properties:
+      area:
+        example: cpu
+        type: string
+      attribute:
+        $ref: '#/definitions/model.AttributeInfo'
+      dimension:
+        example: ""
+        type: string
+      name:
+        example: system.cpu.utilization
+        type: string
+      reason:
+        example: ""
+        type: string
+      schema:
+        example: ""
+        type: string
+      supported:
+        description: Supported is whether the target has the field; Reason says why
+          not.
+        example: true
+        type: boolean
+      unit:
+        example: "1"
+        type: string
+    type: object
+  model.TargetMetricListResp:
+    properties:
+      metrics:
+        items:
+          $ref: '#/definitions/model.TargetMetricInfo'
+        type: array
+      targetId:
+        example: d44ikdomt0tac4ejrmmg
+        type: string
     type: object
   model.TargetReq:
     properties:
@@ -282,8 +360,10 @@ info:
 paths:
   /metrics:
     get:
-      description: 'List the metric catalog: every common metric name a query can
-        ask for, and the ones no collector produces yet with the reason.'
+      description: 'List the metric catalog: the common fields, named and meant as
+        OpenTelemetry names them, and the fields of one collector''s own, each with
+        the attribute that splits it and, for a field no collector provides yet, the
+        reason.'
       operationId: GetAllMetrics
       produces:
       - application/json
@@ -536,6 +616,40 @@ paths:
       summary: Get a target's collector configuration
       tags:
       - '[Monitoring] Targets'
+  /targets/{targetId}/metrics:
+    get:
+      description: 'List the metric catalog as it stands for one target: which fields
+        it has, from the collectors that run on it, and which it does not, with the
+        reason.'
+      operationId: GetTargetMetrics
+      parameters:
+      - description: Target id (CB-Tumblebug node Uid)
+        in: path
+        name: targetId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.TargetMetricListResp'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: List a target's metrics
+      tags:
+      - '[Monitoring] Metrics'
   /targets/sync:
     post:
       description: 'Bring the target table in step with CB-Tumblebug: describe every

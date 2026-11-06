@@ -45,6 +45,7 @@ func NewServer(cfg *config.Config, deps Deps) *Server {
 	g.GET("/targets/:targetId", h.RestGetTarget)
 	g.DELETE("/targets/:targetId", h.RestDeleteTarget)
 	g.GET("/targets/:targetId/collectorConfig", h.RestGetTargetCollectorConfig)
+	g.GET("/targets/:targetId/metrics", h.RestGetTargetMetrics)
 	g.GET("/metrics", h.RestGetAllMetrics)
 	g.POST("/query", h.RestPostQuery)
 

@@ -113,13 +113,12 @@ func (r PromQL) perTarget(q monitoring.QuerySpec) (string, error) {
 		return "", fmt.Errorf("metric %q is not collected yet: %s", row.Name, row.Gap)
 	}
 	if len(row.Exprs) != 1 {
-		return "", fmt.Errorf("metric %q has %d expressions; the renderer cannot choose a collector yet", row.Name, len(row.Exprs))
+		return "", fmt.Errorf("metric %q has %d expressions; the renderer cannot choose a collector yet", row.ID(), len(row.Exprs))
 	}
 	var tmpl string
 	for collector, e := range row.Exprs {
-		tmpl = e
-		if fill := row.ZeroFill[collector]; q.FillZero && fill != "" {
-			tmpl = "(" + e + ") or (" + fill + ")"
+		if tmpl, err = template(row, collector, e, q); err != nil {
+			return "", err
 		}
 	}
 	sel, err := selector(q.Targets)
@@ -137,6 +136,102 @@ func (r PromQL) perTarget(q monitoring.QuerySpec) (string, error) {
 		}
 	}
 	return across(expr, q.Across, q.GroupBy)
+}
+
+// ToSeriesLabels rewrites the attribute names q uses for grouping (GroupBy,
+// TopK.PerLabel, Within) into the series labels of row, so the query and the
+// merging of its chunks work on the labels the series carry. Answers go back
+// to attribute names with ToAttributeNames.
+func ToSeriesLabels(row monitoring.MetricRow, q monitoring.QuerySpec) monitoring.QuerySpec {
+	if len(q.GroupBy) > 0 {
+		groupBy := make([]string, len(q.GroupBy))
+		for i, l := range q.GroupBy {
+			groupBy[i] = SeriesLabel(row, l)
+		}
+		q.GroupBy = groupBy
+	}
+	if q.TopK != nil && q.TopK.PerLabel != "" {
+		k := *q.TopK
+		k.PerLabel = SeriesLabel(row, k.PerLabel)
+		q.TopK = &k
+	}
+	if q.Within != nil {
+		w := *q.Within
+		w.Label = SeriesLabel(row, w.Label)
+		q.Within = &w
+	}
+	return q
+}
+
+// ToAttributeNames renames the series labels of row's dimension and attribute
+// in labels to their OpenTelemetry attribute names.
+func ToAttributeNames(row monitoring.MetricRow, labels map[string]string) map[string]string {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		switch {
+		case row.Dimension != "" && k == row.Dimension:
+			k = row.DimensionName
+		case row.Attribute != nil && k == monitoring.AttrLabel(row.Attribute.Name):
+			k = row.Attribute.Name
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// SeriesLabel is the series label the attribute name stands for in row's
+// expressions: the row's dimension or attribute label, or name itself.
+func SeriesLabel(row monitoring.MetricRow, name string) string {
+	switch {
+	case row.DimensionName != "" && name == row.DimensionName:
+		return row.Dimension
+	case row.Attribute != nil && name == row.Attribute.Name:
+		return monitoring.AttrLabel(name)
+	default:
+		return name
+	}
+}
+
+// template picks the collector's expression for q: the default value, or the
+// field split by its attribute when q asks for Where or SplitBy, kept to the
+// Where value; then the zero fill when q asks for it.
+func template(row monitoring.MetricRow, collector, expr string, q monitoring.QuerySpec) (string, error) {
+	fill := row.ZeroFill[collector]
+	if !q.FillZero {
+		fill = ""
+	}
+	if len(q.Where) == 0 && len(q.SplitBy) == 0 {
+		if fill != "" {
+			return "(" + expr + ") or (" + fill + ")", nil
+		}
+		return expr, nil
+	}
+	if row.Attribute == nil {
+		return "", fmt.Errorf("metric %q has no attribute to split by", row.ID())
+	}
+	name := row.Attribute.Name
+	for _, a := range q.SplitBy {
+		if a != name {
+			return "", fmt.Errorf("metric %q splits by %s, not %s", row.ID(), name, a)
+		}
+	}
+	for a := range q.Where {
+		if a != name {
+			return "", fmt.Errorf("metric %q splits by %s, not %s", row.ID(), name, a)
+		}
+	}
+	split := row.SplitExprs[collector]
+	value, ok := q.Where[name]
+	if !ok {
+		return split, nil
+	}
+	label := monitoring.AttrLabel(name)
+	keep := fmt.Sprintf(`label_replace(vector(1), %q, %q, "", "")`, label, value)
+	out := fmt.Sprintf("(%s) and on (%s) %s", split, label, keep)
+	if fill != "" {
+		out = fmt.Sprintf(`(%s) or label_replace(%s, %q, %q, "", "")`, out, fill, label, value)
+	}
+	return out, nil
 }
 
 // window fills the placeholders and applies the time window. A rate

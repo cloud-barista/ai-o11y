@@ -162,6 +162,7 @@ func TestScraperOf(t *testing.T) {
 
 type fixedKind struct{ frag monitoring.ConfigFragment }
 
+func (fixedKind) Name() string                     { return "fixed" }
 func (fixedKind) Path() monitoring.Path            { return monitoring.PathAgent }
 func (fixedKind) AppliesTo(monitoring.Target) bool { return true }
 func (k fixedKind) Render(monitoring.Target, monitoring.MetricCatalog) (monitoring.ConfigFragment, error) {

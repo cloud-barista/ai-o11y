@@ -40,7 +40,7 @@ func TestQuerySendsThanosParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	q := monitoring.QuerySpec{Metric: "host.cpu.utilization", Targets: monitoring.TargetSet{
+	q := monitoring.QuerySpec{Metric: "system.cpu.utilization", Targets: monitoring.TargetSet{
 		{EntityID: "k1", Kind: "vm"}, {EntityID: "k2", Kind: "vm"}, {EntityID: "k3", Kind: "vm"},
 	}}
 	if _, err := b.Query(context.Background(), q); err != nil {

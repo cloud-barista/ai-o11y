@@ -1,0 +1,106 @@
+# Metric catalog
+
+ai-o11y answers queries in terms of the fields of its metric catalog
+(`internal/monitoring/catalog`), not in the names each collector writes.
+`GET /aio11y/metrics` lists the catalog; `GET /aio11y/targets/{targetId}/metrics`
+lists it for one target.
+
+## Principles
+
+The catalog abstracts collectors the way CB-Spider abstracts clouds.
+
+1. **Collectors keep their own names.** The OpenTelemetry hostmetrics receiver,
+   `nvidia-smi` or NVML write metrics under the names they define. ai-o11y does
+   not rename them at collection time.
+2. **The catalog maps them to fields.** Each field says, per collector, which
+   PromQL computes it from that collector's series.
+   - A **common field** means the same whichever collector provides it. Its
+     name and its meaning are those of the
+     [OpenTelemetry semantic conventions](https://github.com/open-telemetry/semantic-conventions)
+     (v1.45.0), such as `system.cpu.utilization`. Where a collector's value
+     differs from what the convention defines, the field is not provided for
+     that collector.
+   - A **collector's own field** has no counterpart in the semantic
+     conventions, such as hostmetrics' load average. It keeps the collector's
+     name, and its `schema` names the collector, which tells why its shape
+     differs. A query names it with `metric` and `schema`.
+3. **Every field states whether a target has it.** A field no collector
+   provides yet carries the reason (`gap`). For a target, a field is
+   unsupported when none of the collectors running on it provide it, or when
+   the target lacks what the field requires (such as Linux).
+
+## Attributes
+
+Following OpenTelemetry, a field is split by attributes rather than by name:
+`system.cpu.utilization` is one field, and `cpu.mode` (`user`, `system`,
+`idle`, ...) splits it.
+
+- Without `where` or `splitBy`, a query answers the field's **default value**,
+  the one usually shown, which the field's description states: for
+  `system.cpu.utilization`, the share of CPU time not idle.
+- `"where": {"cpu.mode": "user"}` answers that value of the attribute.
+- `"splitBy": ["cpu.mode"]` answers one series per value.
+- A **dimension** splits a field within one target, such as
+  `system.device.name` for disks; `within` collapses it.
+
+Answers carry `entity_id` and the attributes by their OpenTelemetry names.
+Inside PromQL an attribute travels in a label with dots made underscores
+(`cpu_mode`), the way OTLP names reach Prometheus.
+
+## Zero values
+
+Some collectors leave a series out when its value is zero, such as hostmetrics
+for a process state with no processes or paging on a host without swap. A field
+that may be missing for that reason has `zeroFill`; a query with
+`"fillZero": true` answers 0 for those targets that are otherwise reporting.
+The default is off.
+
+## Fields
+
+GPU fields are listed once the GPU receiver is in place.
+
+| Field | Schema | Unit | Attribute (values) | Dimension | Provided |
+|---|---|---|---|---|---|
+| `system.cpu.utilization` | common | 1 | `cpu.mode` (user, system, nice, idle, iowait, interrupt, steal, softirq) |  | yes |
+| `system.cpu.logical.count` | common | {cpu} |  |  | yes |
+| `system.cpu.physical.count` | common | {cpu} |  |  | yes |
+| `system.memory.usage` | common | By | `system.memory.state` (used, free, buffers, cached, inactive, slab_reclaimable, slab_unreclaimable) |  | yes |
+| `system.memory.limit` | common | By |  |  | yes |
+| `system.memory.utilization` | common | 1 | `system.memory.state` (used, free, buffers, cached, inactive, slab_reclaimable, slab_unreclaimable) |  | yes |
+| `system.memory.linux.available` | common | By |  |  | yes |
+| `system.memory.linux.shared` | common | By |  |  | yes |
+| `system.paging.usage` | common | By | `system.paging.state` (used, free, cached) |  | yes |
+| `system.paging.utilization` | common | 1 | `system.paging.state` (used, free, cached) |  | yes |
+| `system.paging.faults` | common | {fault}/s | `system.paging.fault.type` (major, minor) |  | yes |
+| `system.paging.operations` | common | {operation}/s |  |  | no: hostmetrics reports the bytes swapped as its major paging operations on Linux, not a count of operations |
+| `system.disk.io` | common | By/s | `disk.io.direction` (read, write) | `system.device.name` | yes |
+| `system.disk.operations` | common | {operation}/s | `disk.io.direction` (read, write) | `system.device.name` | yes |
+| `system.disk.operation_time` | common | s/s | `disk.io.direction` (read, write) | `system.device.name` | yes |
+| `system.disk.merged` | common | {operation}/s | `disk.io.direction` (read, write) | `system.device.name` | yes |
+| `system.disk.io_time` | common | s/s |  | `system.device.name` | yes |
+| `system.disk.pending_operations` | hostmetrics | {operation} |  | `device` | yes |
+| `system.filesystem.usage` | common | By | `system.filesystem.state` (used, free, reserved) | `system.filesystem.mountpoint` | yes |
+| `system.filesystem.limit` | common | By |  | `system.filesystem.mountpoint` | yes |
+| `system.filesystem.utilization` | common | 1 | `system.filesystem.state` (used, free, reserved) | `system.filesystem.mountpoint` | yes |
+| `system.filesystem.inodes.usage` | hostmetrics | {inode} | `state` (used, free) | `mountpoint` | yes |
+| `system.network.io` | common | By/s | `network.io.direction` (transmit, receive) | `network.interface.name` | yes |
+| `system.network.packet.count` | common | {packet}/s | `network.io.direction` (transmit, receive) | `system.device.name` | yes |
+| `system.network.errors` | common | {error}/s | `network.io.direction` (transmit, receive) | `network.interface.name` | yes |
+| `system.network.packet.dropped` | common | {packet}/s | `network.io.direction` (transmit, receive) | `network.interface.name` | yes |
+| `system.uptime` | common | s |  |  | yes |
+| `system.cpu.load_average.1m` | hostmetrics | {thread} |  |  | yes |
+| `system.cpu.load_average.5m` | hostmetrics | {thread} |  |  | yes |
+| `system.cpu.load_average.15m` | hostmetrics | {thread} |  |  | yes |
+| `system.process.count` | common | {process} | `process.state` (running, sleeping, stopped, defunct, blocked, idle) |  | yes |
+| `process.cpu.utilization` | common | 1 |  | `process.executable.name` | no: per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name) |
+| `process.memory.utilization` | common | 1 |  | `process.executable.name` | no: per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name) |
+
+## Known limits
+
+- The semantic conventions for these fields are mostly at development or
+  release-candidate stability; names and attributes may still change there.
+- The meaning of a common field follows OpenTelemetry. Where it differs from
+  the fields shown by existing screens (for example, CPU user time with or
+  without guest time), the difference is not reconciled yet.
+- Fields whose value only the existing screens compute, such as average I/O
+  wait per operation, are not in the catalog yet.

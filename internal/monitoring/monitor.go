@@ -8,6 +8,7 @@ package monitoring
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -105,6 +106,9 @@ type CollectorHealth struct {
 
 // CollectorKind turns a target and the catalog into collector configuration.
 type CollectorKind interface {
+	// Name is the collector key catalog rows use for its expressions, such
+	// as "hostmetrics".
+	Name() string
 	Path() Path
 	AppliesTo(t Target) bool
 	Render(t Target, c MetricCatalog) (ConfigFragment, error)
@@ -135,25 +139,46 @@ const (
 	PlaceholderRange = "$range"
 )
 
-// MetricRow is one catalog entry: a common metric name and, for each collector
-// that produces it, the PromQL that computes it from that collector's series.
+// MetricRow is one field of the metric catalog, in the way Spider abstracts
+// clouds: collectors keep their own names, and the catalog says how each field
+// is computed from them.
+//
+//   - A common field (Schema empty) means the same thing whichever collector
+//     provides it; its name and meaning are the OpenTelemetry semantic
+//     conventions', such as system.cpu.utilization.
+//   - A field of one collector's own (Schema set to that collector) has no
+//     OpenTelemetry counterpart, such as hostmetrics' load average; it keeps
+//     the collector's name, and Schema tells why its shape differs.
 type MetricRow struct {
-	// Name is the common name screens and queries use, such as
-	// "host.cpu.utilization".
+	// Name is the field's name: the OpenTelemetry metric name for a common
+	// field, the collector's own name otherwise.
 	Name string
-	// Area groups rows the way the current fields are grouped: cpu, mem, swap,
-	// disk, diskio, net, system, processes, procstat, gpu.
+	// Schema is empty for a common field and names the collector for a field
+	// of its own.
+	Schema string
+	// Area groups rows for listing: cpu, memory, paging, disk, filesystem,
+	// network, system, process, gpu.
 	Area        string
 	Unit        string
 	Kind        MetricKind
 	Description string
-	// Exprs maps a collector (such as "hostmetrics" or "gpu") to the PromQL
-	// that computes the metric from its series. The result is grouped by
-	// entity_id and Dimension.
+	// Exprs maps a collector (such as "hostmetrics") to the PromQL that
+	// computes the field's default value from its series: one series per
+	// entity_id and Dimension. For a field with an Attribute the default
+	// value is the one screens usually show, which Description states, such
+	// as CPU time not idle for system.cpu.utilization.
 	Exprs map[string]string
-	// Dimension is the label that splits the metric within one target, such as
-	// "device" or "uuid"; empty means one series per target.
-	Dimension string
+	// Attribute, when set, splits the field, such as cpu.mode for
+	// system.cpu.utilization. SplitExprs computes it with one series per
+	// attribute value, in the label AttrLabel(Attribute.Name).
+	Attribute  *Attribute
+	SplitExprs map[string]string
+	// Dimension is the label that splits the field within one target, such as
+	// "device" or "mountpoint"; empty means one series per target.
+	// DimensionName is its OpenTelemetry attribute name, such as
+	// system.device.name, which answers carry.
+	Dimension     string
+	DimensionName string
 	// Requires lists the capabilities a target needs to emit the metric, such
 	// as "os:linux" or "physicalGpuMetrics". A target without one reports the
 	// metric as unsupported rather than missing.
@@ -161,19 +186,40 @@ type MetricRow struct {
 	// Enables lists the collector metrics that are off by default and must be
 	// turned on in the collector configuration for Exprs to have data.
 	Enables []string
-	// ZeroFill maps a collector that leaves a zero value out, where the current
-	// field sends 0, to an expression that is 0 for every target the collector
-	// is reporting from. A query with FillZero takes the metric as 0 where it
-	// is missing and this is present.
+	// ZeroFill maps a collector that leaves a series out when its value is
+	// zero to an expression that is 0 for every target that collector is
+	// reporting from. A query with FillZero takes the field as 0 where it is
+	// missing and this is present.
 	ZeroFill map[string]string
-	// Gap says why no collector produces the metric yet. A row with a gap has
-	// no Exprs; it stays in the catalog so the gap is visible.
+	// Gap says why no collector provides the field yet. A row with a gap has
+	// no expressions; it stays in the catalog so the gap is visible.
 	Gap string
 }
 
-// MetricCatalog resolves common metric names.
+// ID is how a query names the row: the name of a common field, and
+// "schema:name" for a field of one collector's own.
+func (r MetricRow) ID() string {
+	if r.Schema == "" {
+		return r.Name
+	}
+	return r.Schema + ":" + r.Name
+}
+
+// Attribute is an OpenTelemetry attribute that splits a field.
+type Attribute struct {
+	// Name is the OpenTelemetry attribute name, such as cpu.mode.
+	Name string
+	// Values are the values the attribute is known to take.
+	Values []string
+}
+
+// AttrLabel is the series label an attribute travels in: its name with dots
+// made underscores, the way OTLP names reach Prometheus.
+func AttrLabel(name string) string { return strings.ReplaceAll(name, ".", "_") }
+
+// MetricCatalog resolves catalog fields by MetricRow.ID.
 type MetricCatalog interface {
-	Lookup(name string) (MetricRow, error)
+	Lookup(id string) (MetricRow, error)
 	Rows() []MetricRow
 }
 
@@ -253,6 +299,12 @@ type QuerySpec struct {
 	// otherwise reporting from. Off, a zero shows as no data, the same as a
 	// target that reports nothing.
 	FillZero bool
+	// Where keeps the series whose attribute (OpenTelemetry name) has the
+	// value, such as cpu.mode=user; SplitBy gives one series per value of the
+	// attribute. Either takes the field apart by its Attribute instead of
+	// answering its default value.
+	Where   map[string]string
+	SplitBy []string
 }
 
 // Point is one sample.

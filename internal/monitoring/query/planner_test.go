@@ -115,8 +115,8 @@ func testRenderer(t *testing.T) PromQL {
 	t.Helper()
 	rows := append(catalog.Builtin(), monitoring.MetricRow{
 		Name: "test.gpu.utilization", Area: "gpu", Unit: "ratio", Kind: monitoring.KindGauge,
-		Dimension: "uuid",
-		Exprs:     map[string]string{catalog.CollectorGPU: `max by (entity_id, uuid) (nvidia_smi_utilization_gpu_ratio{$sel})`},
+		Dimension: "uuid", DimensionName: "gpu.uuid",
+		Exprs: map[string]string{catalog.CollectorGPU: `max by (entity_id, uuid) (nvidia_smi_utilization_gpu_ratio{$sel})`},
 	})
 	c, err := catalog.New(rows)
 	if err != nil {
@@ -164,20 +164,20 @@ func TestPlannerChunkedEqualsWhole(t *testing.T) {
 	gpuAvg := &monitoring.Reduce{Label: "uuid", Fn: monitoring.AggAvg}
 
 	cases := map[string]monitoring.QuerySpec{
-		"per target":            {Metric: "host.memory.utilization"},
-		"per target range":      {Metric: "host.cpu.utilization", Window: fiveMin, Step: 5 * time.Minute},
-		"across avg":            {Metric: "host.cpu.utilization", Window: hour, Across: monitoring.AggAvg},
-		"across sum":            {Metric: "host.memory.utilization", Across: monitoring.AggSum},
-		"across min":            {Metric: "host.memory.utilization", Across: monitoring.AggMin},
-		"across max":            {Metric: "host.memory.utilization", Across: monitoring.AggMax},
+		"per target":            {Metric: "system.memory.utilization"},
+		"per target range":      {Metric: "system.cpu.utilization", Window: fiveMin, Step: 5 * time.Minute},
+		"across avg":            {Metric: "system.cpu.utilization", Window: hour, Across: monitoring.AggAvg},
+		"across sum":            {Metric: "system.memory.utilization", Across: monitoring.AggSum},
+		"across min":            {Metric: "system.memory.utilization", Across: monitoring.AggMin},
+		"across max":            {Metric: "system.memory.utilization", Across: monitoring.AggMax},
 		"across count":          {Metric: "test.gpu.utilization", Across: monitoring.AggCount},
 		"across avg range":      {Metric: "test.gpu.utilization", Within: gpuAvg, Window: fiveMin, Step: 5 * time.Minute, Across: monitoring.AggAvg},
 		"across avg group by":   {Metric: "test.gpu.utilization", Across: monitoring.AggAvg, GroupBy: []string{"uuid"}},
-		"top-k":                 {Metric: "host.cpu.utilization", Window: hour, TopK: &monitoring.TopK{N: 3, Desc: true}},
-		"bottom-k":              {Metric: "host.memory.utilization", TopK: &monitoring.TopK{N: 2}},
+		"top-k":                 {Metric: "system.cpu.utilization", Window: hour, TopK: &monitoring.TopK{N: 3, Desc: true}},
+		"bottom-k":              {Metric: "system.memory.utilization", TopK: &monitoring.TopK{N: 2}},
 		"top-k per label":       {Metric: "test.gpu.utilization", TopK: &monitoring.TopK{N: 1, Desc: true, PerLabel: "entity_id"}},
 		"top-k of groups":       {Metric: "test.gpu.utilization", Across: monitoring.AggMax, GroupBy: []string{"uuid"}, TopK: &monitoring.TopK{N: 1, Desc: true}},
-		"two-stage range top-k": {Metric: "host.cpu.utilization", Window: fiveMin, Step: 5 * time.Minute, TopK: &monitoring.TopK{N: 3, Desc: true}},
+		"two-stage range top-k": {Metric: "system.cpu.utilization", Window: fiveMin, Step: 5 * time.Minute, TopK: &monitoring.TopK{N: 3, Desc: true}},
 		"two-stage gpu top-k":   {Metric: "test.gpu.utilization", Window: fiveMin, Step: 5 * time.Minute, TopK: &monitoring.TopK{N: 3, Desc: true}},
 	}
 	for name, q := range cases {
@@ -211,7 +211,7 @@ func TestPlannerChunkedEqualsWhole(t *testing.T) {
 func TestPlannerTwoStagePicksTop(t *testing.T) {
 	whole, _, _ := planners(t)
 	got, err := whole.Query(context.Background(), monitoring.QuerySpec{
-		Metric: "host.cpu.utilization", Targets: targets(fleet...),
+		Metric: "system.cpu.utilization", Targets: targets(fleet...),
 		Window: monitoring.Agg{Fn: monitoring.AggAvg, Range: 5 * time.Minute}, Step: 5 * time.Minute,
 		TopK:  &monitoring.TopK{N: 3, Desc: true},
 		Start: graphStart, End: graphEnd,
@@ -236,13 +236,13 @@ func TestPlannerRejects(t *testing.T) {
 	whole, _, _ := planners(t)
 	for name, q := range map[string]monitoring.QuerySpec{
 		"two-stage across": {
-			Metric: "host.cpu.utilization", Targets: targets(fleet...), Step: 5 * time.Minute,
+			Metric: "system.cpu.utilization", Targets: targets(fleet...), Step: 5 * time.Minute,
 			Start: graphStart, End: graphEnd,
 			Window: monitoring.Agg{Fn: monitoring.AggAvg, Range: 5 * time.Minute},
 			Across: monitoring.AggAvg, GroupBy: []string{"entity_id"}, TopK: &monitoring.TopK{N: 1},
 		},
-		"no targets":     {Metric: "host.memory.used", Across: monitoring.AggAvg},
-		"unknown across": {Metric: "host.memory.used", Targets: targets(fleet...), Across: "median"},
+		"no targets":     {Metric: "system.memory.usage", Across: monitoring.AggAvg},
+		"unknown across": {Metric: "system.memory.usage", Targets: targets(fleet...), Across: "median"},
 	} {
 		if _, err := whole.Query(context.Background(), q); err == nil {
 			t.Errorf("%s: Query succeeded", name)

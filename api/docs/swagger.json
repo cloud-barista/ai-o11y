@@ -14,7 +14,7 @@
     "paths": {
         "/metrics": {
             "get": {
-                "description": "List the metric catalog: every common metric name a query can ask for, and the ones no collector produces yet with the reason.",
+                "description": "List the metric catalog: the common fields, named and meant as OpenTelemetry names them, and the fields of one collector's own, each with the attribute that splits it and, for a field no collector provides yet, the reason.",
                 "produces": [
                     "application/json"
                 ],
@@ -421,9 +421,72 @@
                     }
                 }
             }
+        },
+        "/targets/{targetId}/metrics": {
+            "get": {
+                "description": "List the metric catalog as it stands for one target: which fields it has, from the collectors that run on it, and which it does not, with the reason.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "[Monitoring] Metrics"
+                ],
+                "summary": "List a target's metrics",
+                "operationId": "GetTargetMetrics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Target id (CB-Tumblebug node Uid)",
+                        "name": "targetId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.TargetMetricListResp"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "model.AttributeInfo": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "example": "cpu.mode"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "model.MetricInfo": {
             "type": "object",
             "properties": {
@@ -431,12 +494,20 @@
                     "type": "string",
                     "example": "cpu"
                 },
+                "attribute": {
+                    "description": "Attribute splits the field: a query names it in where or splitBy.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/model.AttributeInfo"
+                        }
+                    ]
+                },
                 "description": {
                     "type": "string",
-                    "example": "Share of CPU time not idle (current 100 - usage_idle)"
+                    "example": "Share of CPU time in each cpu.mode. Without one, the share not idle."
                 },
                 "dimension": {
-                    "description": "Dimension splits the metric within a target, such as \"device\".",
+                    "description": "Dimension is the attribute that splits the field within a target, such\nas system.device.name; within collapses it.",
                     "type": "string",
                     "example": ""
                 },
@@ -455,23 +526,28 @@
                 },
                 "name": {
                     "type": "string",
-                    "example": "host.cpu.utilization"
+                    "example": "system.cpu.utilization"
                 },
                 "requires": {
-                    "description": "Requires lists what a target needs to have the metric, such as \"os:linux\".",
+                    "description": "Requires lists what a target needs to have the field, such as \"os:linux\".",
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
+                "schema": {
+                    "description": "Schema is empty for a common field and names the collector otherwise.",
+                    "type": "string",
+                    "example": ""
+                },
                 "supported": {
-                    "description": "Supported is false when no collector produces the metric as the current\nfield means it; Gap says why.",
+                    "description": "Supported is false when no collector provides the field yet; Gap says why.",
                     "type": "boolean",
                     "example": true
                 },
                 "unit": {
                     "type": "string",
-                    "example": "ratio"
+                    "example": "1"
                 },
                 "zeroFill": {
                     "description": "ZeroFill is true when a query can take a missing value as 0 (fillZero).",
@@ -506,7 +582,7 @@
             "type": "object",
             "properties": {
                 "across": {
-                    "description": "Across combines the targets with fn, keeping the groupBy labels.",
+                    "description": "Across combines the targets with fn, keeping the groupBy attributes.",
                     "type": "string",
                     "example": ""
                 },
@@ -525,12 +601,23 @@
                     }
                 },
                 "metric": {
+                    "description": "Metric and Schema name the catalog field (see GET /metrics); Schema is\nempty for a common field.",
                     "type": "string",
-                    "example": "host.cpu.utilization"
+                    "example": "system.cpu.utilization"
+                },
+                "schema": {
+                    "type": "string",
+                    "example": ""
                 },
                 "selector": {
                     "type": "object",
                     "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "splitBy": {
+                    "type": "array",
+                    "items": {
                         "type": "string"
                     }
                 },
@@ -551,6 +638,13 @@
                 "topK": {
                     "$ref": "#/definitions/model.TopKReq"
                 },
+                "where": {
+                    "description": "Where keeps the value of the field's attribute, such as\n{\"cpu.mode\": \"user\"}; SplitBy gives one series per value of it, such as\n[\"cpu.mode\"]. Without either the field answers its default value.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
                 "windowFn": {
                     "description": "Window aggregates each series over the last windowRange with\nwindowFn: avg, min, max, sum, count or last.",
                     "type": "string",
@@ -561,7 +655,7 @@
                     "example": ""
                 },
                 "within": {
-                    "description": "Within collapses the metric's dimension (devices, GPUs) inside each\ntarget with fn: avg, min, max, sum or count.",
+                    "description": "Within collapses the field's dimension (devices, mount points) inside\neach target with fn: avg, min, max, sum or count.",
                     "type": "string",
                     "example": ""
                 }
@@ -589,6 +683,7 @@
             "type": "object",
             "properties": {
                 "labels": {
+                    "description": "Labels are entity_id and the attributes the series is split by, by\ntheir OpenTelemetry names.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "string"
@@ -664,6 +759,58 @@
                     "items": {
                         "$ref": "#/definitions/model.TargetInfo"
                     }
+                }
+            }
+        },
+        "model.TargetMetricInfo": {
+            "type": "object",
+            "properties": {
+                "area": {
+                    "type": "string",
+                    "example": "cpu"
+                },
+                "attribute": {
+                    "$ref": "#/definitions/model.AttributeInfo"
+                },
+                "dimension": {
+                    "type": "string",
+                    "example": ""
+                },
+                "name": {
+                    "type": "string",
+                    "example": "system.cpu.utilization"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": ""
+                },
+                "schema": {
+                    "type": "string",
+                    "example": ""
+                },
+                "supported": {
+                    "description": "Supported is whether the target has the field; Reason says why not.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "unit": {
+                    "type": "string",
+                    "example": "1"
+                }
+            }
+        },
+        "model.TargetMetricListResp": {
+            "type": "object",
+            "properties": {
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.TargetMetricInfo"
+                    }
+                },
+                "targetId": {
+                    "type": "string",
+                    "example": "d44ikdomt0tac4ejrmmg"
                 }
             }
         },

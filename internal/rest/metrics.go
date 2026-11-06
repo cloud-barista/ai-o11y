@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -12,12 +13,13 @@ import (
 	"github.com/cloud-barista/ai-o11y/internal/model"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/promapi"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/query"
 )
 
 // RestGetAllMetrics godoc
 // @ID GetAllMetrics
 // @Summary List metrics
-// @Description List the metric catalog: every common metric name a query can ask for, and the ones no collector produces yet with the reason.
+// @Description List the metric catalog: the common fields, named and meant as OpenTelemetry names them, and the fields of one collector's own, each with the attribute that splits it and, for a field no collector provides yet, the reason.
 // @Tags [Monitoring] Metrics
 // @Produce json
 // @Success 200 {object} model.MetricListResp
@@ -27,12 +29,86 @@ func (h *handler) RestGetAllMetrics(c echo.Context) error {
 	resp := model.MetricListResp{Metrics: make([]model.MetricInfo, 0, len(rows))}
 	for _, r := range rows {
 		resp.Metrics = append(resp.Metrics, model.MetricInfo{
-			Name: r.Name, Area: r.Area, Unit: r.Unit, Kind: string(r.Kind), Description: r.Description,
-			Dimension: r.Dimension, Requires: r.Requires,
-			Supported: r.Gap == "", Gap: r.Gap, ZeroFill: len(r.ZeroFill) > 0,
+			Name: r.Name, Schema: r.Schema, Area: r.Area, Unit: r.Unit, Kind: string(r.Kind),
+			Description: r.Description, Attribute: attributeInfo(r), Dimension: r.DimensionName,
+			Requires: r.Requires, Supported: r.Gap == "", Gap: r.Gap, ZeroFill: len(r.ZeroFill) > 0,
 		})
 	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+func attributeInfo(r monitoring.MetricRow) *model.AttributeInfo {
+	if r.Attribute == nil {
+		return nil
+	}
+	return &model.AttributeInfo{Name: r.Attribute.Name, Values: r.Attribute.Values}
+}
+
+// RestGetTargetMetrics godoc
+// @ID GetTargetMetrics
+// @Summary List a target's metrics
+// @Description List the metric catalog as it stands for one target: which fields it has, from the collectors that run on it, and which it does not, with the reason.
+// @Tags [Monitoring] Metrics
+// @Produce json
+// @Param targetId path string true "Target id (CB-Tumblebug node Uid)"
+// @Success 200 {object} model.TargetMetricListResp
+// @Failure 404 {object} model.SimpleMsg
+// @Failure 500 {object} model.SimpleMsg
+// @Failure 503 {object} model.SimpleMsg
+// @Router /targets/{targetId}/metrics [get]
+func (h *handler) RestGetTargetMetrics(c echo.Context) error {
+	t, ok, err := h.lookup(c)
+	if !ok {
+		return err
+	}
+	running := map[string]bool{}
+	for _, k := range h.Collectors {
+		if k.AppliesTo(t) {
+			running[k.Name()] = true
+		}
+	}
+	rows := h.Catalog.Rows()
+	resp := model.TargetMetricListResp{TargetID: t.EntityID, Metrics: make([]model.TargetMetricInfo, 0, len(rows))}
+	for _, r := range rows {
+		reason := unsupported(r, t, running)
+		resp.Metrics = append(resp.Metrics, model.TargetMetricInfo{
+			Name: r.Name, Schema: r.Schema, Area: r.Area, Unit: r.Unit,
+			Attribute: attributeInfo(r), Dimension: r.DimensionName,
+			Supported: reason == "", Reason: reason,
+		})
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// unsupported says why target t does not have the field of row, or "" when it
+// does: no collector provides it yet, none of the collectors provide it on t,
+// or t lacks what it requires.
+func unsupported(r monitoring.MetricRow, t monitoring.Target, running map[string]bool) string {
+	if r.Gap != "" {
+		return r.Gap
+	}
+	provided := false
+	for collector := range r.Exprs {
+		if running[collector] {
+			provided = true
+			break
+		}
+	}
+	if !provided {
+		return "No collector running on this target provides it"
+	}
+	for _, req := range r.Requires {
+		os, isOS := strings.CutPrefix(req, "os:")
+		switch {
+		case isOS && t.OS == "":
+			return "Needs " + os + "; the target's OS is unknown"
+		case isOS && t.OS != os:
+			return "Needs " + os
+		case !isOS:
+			return "Needs " + req + ", which is not known for the target"
+		}
+	}
+	return ""
 }
 
 // RestPostQuery godoc
@@ -62,7 +138,7 @@ func (h *handler) RestPostQuery(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Malformed request body: check JSON syntax"})
 	}
-	row, err := h.Catalog.Lookup(req.Metric)
+	row, err := h.Catalog.Lookup(monitoring.MetricRow{Name: req.Metric, Schema: req.Schema}.ID())
 	if err != nil {
 		return c.JSON(http.StatusNotFound, model.SimpleMsg{Message: "Unknown metric: see GET /metrics"})
 	}
@@ -73,6 +149,15 @@ func (h *handler) RestPostQuery(c echo.Context) error {
 	if msg != "" {
 		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: msg})
 	}
+	q.Metric = row.ID()
+	if msg := checkAttributes(row, q); msg != "" {
+		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: msg})
+	}
+	if q.Within != nil && q.Within.Label == "" {
+		// within names no attribute: the field's dimension is the only one.
+		q.Within.Label = row.DimensionName
+	}
+	q = query.ToSeriesLabels(row, q)
 
 	switch {
 	case len(req.TargetIDs) > 0:
@@ -109,7 +194,31 @@ func (h *handler) RestPostQuery(c echo.Context) error {
 		log.Warn().Err(err).Str("metric", q.Metric).Msg("Query could not be built")
 		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Query could not be built: " + err.Error()})
 	}
-	return c.JSON(http.StatusOK, queryResp(series, q.Targets))
+	return c.JSON(http.StatusOK, queryResp(row, series, q.Targets))
+}
+
+// checkAttributes says what is wrong with the attributes q names, or "".
+func checkAttributes(row monitoring.MetricRow, q monitoring.QuerySpec) string {
+	if len(q.Where) == 0 && len(q.SplitBy) == 0 {
+		return ""
+	}
+	if row.Attribute == nil {
+		return "Metric has no attribute to split by"
+	}
+	for _, a := range q.SplitBy {
+		if a != row.Attribute.Name {
+			return "Metric splits by " + row.Attribute.Name + " only"
+		}
+	}
+	for a, v := range q.Where {
+		if a != row.Attribute.Name {
+			return "Metric splits by " + row.Attribute.Name + " only"
+		}
+		if v == "" {
+			return "where needs a value for " + a
+		}
+	}
+	return ""
 }
 
 // querySpec turns a request into a QuerySpec without its targets, or returns
@@ -118,6 +227,7 @@ func querySpec(req model.QueryReq) (monitoring.QuerySpec, string) {
 	q := monitoring.QuerySpec{
 		Metric: req.Metric, Start: req.Start, End: req.End,
 		Across: monitoring.AggFn(req.Across), GroupBy: req.GroupBy, FillZero: req.FillZero,
+		Where: req.Where, SplitBy: req.SplitBy,
 	}
 	if req.Within != "" {
 		q.Within = &monitoring.Reduce{Fn: monitoring.AggFn(req.Within)}
@@ -148,14 +258,14 @@ func querySpec(req model.QueryReq) (monitoring.QuerySpec, string) {
 	return q, ""
 }
 
-func queryResp(series []monitoring.Series, targets monitoring.TargetSet) model.QueryResp {
+func queryResp(row monitoring.MetricRow, series []monitoring.Series, targets monitoring.TargetSet) model.QueryResp {
 	byID := make(map[string]monitoring.Target, len(targets))
 	for _, t := range targets {
 		byID[t.EntityID] = t
 	}
 	resp := model.QueryResp{Series: make([]model.SeriesInfo, 0, len(series)), Targets: map[string]model.TargetInfo{}}
 	for _, s := range series {
-		info := model.SeriesInfo{Labels: s.Labels, Points: make([]model.PointInfo, 0, len(s.Points))}
+		info := model.SeriesInfo{Labels: query.ToAttributeNames(row, s.Labels), Points: make([]model.PointInfo, 0, len(s.Points))}
 		for _, p := range s.Points {
 			pt := model.PointInfo{T: p.T}
 			if !math.IsNaN(p.V) && !math.IsInf(p.V, 0) {
