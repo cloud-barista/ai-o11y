@@ -69,6 +69,10 @@ type TargetSource interface {
 	// place.
 	KeyField() string
 	List(ctx context.Context, scope Scope) ([]Target, error)
+	// Exists reports whether the platform still has t. It returns false only
+	// when the platform answers that t is gone; any other failure is an
+	// error, so a caller never drops a target it could not check.
+	Exists(ctx context.Context, t Target) (bool, error)
 }
 
 // Path is how samples are collected.

@@ -2,7 +2,9 @@ package tumblebug
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -75,6 +77,49 @@ func (s *Source) List(ctx context.Context, scope monitoring.Scope) ([]monitoring
 		}
 	}
 	return targets, nil
+}
+
+// msgNodeNotFound is how CB-Tumblebug (v0.13.5) says a node is not there. It
+// answers a missing node with HTTP 500, the status it also uses for its own
+// failures, so the message is what tells the two apart: a failure to read its
+// store says "failed to get GetNodeObject" instead (core/infra/manage_info.go,
+// GetNodeObjectWithNodeGroups). If CB-Tumblebug rewords it, Exists reports an
+// error and nothing is dropped.
+const msgNodeNotFound = "no Node found"
+
+// Exists implements monitoring.TargetSource. It asks CB-Tumblebug for the node
+// t was listed as. The node is gone when CB-Tumblebug answers 404, or 500 with
+// msgNodeNotFound, or when the node under that id now has another Uid, which
+// means it was re-created. Any other answer is an error.
+func (s *Source) Exists(ctx context.Context, t monitoring.Target) (bool, error) {
+	nsID, infraID, nodeID := t.Extra[ExtraNamespace], t.Extra[ExtraInfra], t.Extra[ExtraNode]
+	if nsID == "" || infraID == "" || nodeID == "" {
+		return false, fmt.Errorf("target %q has no %s, %s and %s to look it up by",
+			t.EntityID, ExtraNamespace, ExtraInfra, ExtraNode)
+	}
+	n, err := s.client.getNode(ctx, nsID, infraID, nodeID)
+	if err != nil {
+		if nodeGone(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check node %s/%s/%s: %w", nsID, infraID, nodeID, err)
+	}
+	return n.UID == t.EntityID, nil
+}
+
+func nodeGone(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.StatusCode {
+	case http.StatusNotFound:
+		return true
+	case http.StatusInternalServerError:
+		return strings.Contains(apiErr.Message, msgNodeNotFound)
+	default:
+		return false
+	}
 }
 
 func (s *Source) namespaces(ctx context.Context, scope monitoring.Scope) ([]string, error) {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 const (
 	headerCredentialHolder = "x-credential-holder"
 	maxErrorBodyBytes      = 4 << 10
+	// maxRetries is how many times a request CB-Tumblebug rate-limited (429)
+	// is sent again, waiting longer each time.
+	maxRetries       = 4
+	defaultRetryBase = 500 * time.Millisecond
 )
 
 // Config is where CB-Tumblebug is reached and how.
@@ -40,6 +45,9 @@ type Client struct {
 	password         string
 	credentialHolder string
 	httpClient       *http.Client
+	// retryBase is the first wait after a 429; each retry doubles it unless
+	// CB-Tumblebug names a wait in Retry-After.
+	retryBase time.Duration
 }
 
 // NewClient builds a Client from configuration.
@@ -50,6 +58,7 @@ func NewClient(cfg Config) *Client {
 		password:         cfg.Password,
 		credentialHolder: cfg.CredentialHolder,
 		httpClient:       &http.Client{Timeout: cfg.Timeout},
+		retryBase:        defaultRetryBase,
 	}
 }
 
@@ -72,8 +81,34 @@ func StatusCode(err error) int {
 	return 0
 }
 
-// get sends a GET request to CB-Tumblebug and decodes the JSON response into out.
+// get sends a GET request to CB-Tumblebug and decodes the JSON response into
+// out. A 429 is retried up to maxRetries times with a growing wait; the last
+// 429 is returned as an APIError.
 func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {
+	wait := c.retryBase
+	for attempt := 0; ; attempt++ {
+		retryAfter, err := c.getOnce(ctx, path, query, out)
+		if StatusCode(err) != http.StatusTooManyRequests || attempt == maxRetries {
+			return err
+		}
+		if retryAfter > 0 {
+			wait = retryAfter
+		}
+		log.Debug().Str("path", path).Dur("wait", wait).Int("retry", attempt+1).Msg("CB-Tumblebug rate-limited the request")
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		wait *= 2
+	}
+}
+
+// getOnce sends one GET request. On a 429 it also returns the wait
+// CB-Tumblebug named in Retry-After, if any.
+func (c *Client) getOnce(ctx context.Context, path string, query url.Values, out any) (time.Duration, error) {
 	endpoint := c.baseURL + "/" + strings.TrimLeft(path, "/")
 	if len(query) > 0 {
 		endpoint += "?" + query.Encode()
@@ -81,7 +116,7 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("failed to build request: %w", err)
+		return 0, fmt.Errorf("failed to build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.SetBasicAuth(c.username, c.password)
@@ -94,17 +129,21 @@ func (c *Client) get(ctx context.Context, path string, query url.Values, out any
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to call tumblebug GET %s: %w", path, err)
+		return 0, fmt.Errorf("failed to call tumblebug GET %s: %w", path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Message: readErrorMessage(resp.Body)}
+		var retryAfter time.Duration
+		if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 {
+			retryAfter = time.Duration(secs) * time.Second
+		}
+		return retryAfter, &APIError{StatusCode: resp.StatusCode, Message: readErrorMessage(resp.Body)}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("failed to decode tumblebug response for GET %s: %w", path, err)
+		return 0, fmt.Errorf("failed to decode tumblebug response for GET %s: %w", path, err)
 	}
-	return nil
+	return 0, nil
 }
 
 // readErrorMessage extracts the Tumblebug SimpleMsg message, falling back to raw text.
@@ -180,4 +219,13 @@ func (c *Client) listNodes(ctx context.Context, nsID string) ([]node, error) {
 		return nil, err
 	}
 	return out.Node, nil
+}
+
+// getNode returns one node (GET /ns/{nsId}/infra/{infraId}/node/{nodeId}).
+func (c *Client) getNode(ctx context.Context, nsID, infraID, nodeID string) (node, error) {
+	var out node
+	path := fmt.Sprintf("/ns/%s/infra/%s/node/%s",
+		url.PathEscape(nsID), url.PathEscape(infraID), url.PathEscape(nodeID))
+	err := c.get(ctx, path, nil, &out)
+	return out, err
 }

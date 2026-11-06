@@ -17,7 +17,7 @@ import (
 )
 
 // Store is the Mapper over the target table. A target is saved when its agent
-// is installed and kept in step with the platform by reconciling, so queries
+// is installed and kept in step with the platform by a Syncer, so queries
 // resolve targets from the table and never call the platform.
 type Store struct {
 	db       *gorm.DB
@@ -115,7 +115,7 @@ func (s *Store) Lookup(ctx context.Context, key string) (monitoring.Target, erro
 	return targets[0], nil
 }
 
-// Keys returns the key of every stored target, for reconciling with the
+// Keys returns the key of every stored target, for syncing with the
 // platform.
 func (s *Store) Keys(ctx context.Context) ([]string, error) {
 	var keys []string

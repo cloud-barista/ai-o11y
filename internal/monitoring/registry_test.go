@@ -10,6 +10,7 @@ type fakeSource struct{ targets []Target }
 
 func (f fakeSource) KeyField() string                              { return "Node.Uid" }
 func (f fakeSource) List(context.Context, Scope) ([]Target, error) { return f.targets, nil }
+func (f fakeSource) Exists(context.Context, Target) (bool, error)  { return true, nil }
 
 func TestRegistryGet(t *testing.T) {
 	r := NewRegistry[TargetSource]("target source")
