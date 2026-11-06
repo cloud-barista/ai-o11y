@@ -2,7 +2,7 @@ APP   := ai-o11y-server
 GOBIN := $(shell go env GOPATH)/bin
 IMAGE := ai-o11y:local
 
-.PHONY: build run test swag fmt lint verify docker-build
+.PHONY: build run test swag fmt lint verify docker-build otelcol otelcol-validate
 
 build:
 	go build -o bin/$(APP) ./cmd/$(APP)
@@ -27,3 +27,10 @@ verify: fmt build test lint
 
 docker-build:
 	docker build -t $(IMAGE) .
+
+# The collector is built on its own from otelcol/; see otelcol/Makefile.
+otelcol:
+	$(MAKE) -C otelcol build
+
+otelcol-validate:
+	$(MAKE) -C otelcol validate

@@ -1,1 +1,3 @@
 bin/
+otelcol/_build/
+otelcol/_tools/
