@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func read(t *testing.T, name string) []byte {
@@ -154,4 +155,18 @@ func TestRealNvidiaSMI(t *testing.T) {
 		t.Fatalf("Read = %+v, %v", gpus, err)
 	}
 	t.Logf("%d GPUs, %d values on the first: %v", len(gpus), len(gpus[0].Values), gpus[0].Values)
+}
+
+// TestRunCommandStopsWaiting: a command that outlives its context is killed
+// and the call returns, instead of blocking the scrape.
+func TestRunCommandStopsWaiting(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := runCommand(ctx, "sleep", "30"); err == nil {
+		t.Fatal("a killed command succeeded")
+	}
+	if d := time.Since(start); d > waitDelay+time.Second {
+		t.Errorf("returned after %v", d)
+	}
 }

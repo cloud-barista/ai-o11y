@@ -12,7 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+// waitDelay bounds the wait for nvidia-smi's output once its context ended.
+const waitDelay = 5 * time.Second
 
 // identityFields are read with every sample and become attributes.
 var identityFields = []string{"index", "uuid", "name"}
@@ -24,6 +28,9 @@ func runCommand(ctx context.Context, path string, args ...string) ([]byte, error
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stderr = &stderr
+	// After the scrape timeout kills nvidia-smi, stop waiting for its output
+	// shortly even when a process stuck in the driver keeps it open.
+	cmd.WaitDelay = waitDelay
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w: %s", path, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
