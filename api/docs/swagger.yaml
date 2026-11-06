@@ -312,9 +312,14 @@ definitions:
         example: ap-northeast-2
         type: string
       uid:
-        description: Uid is the CB-Tumblebug node Uid, the target's key.
+        description: UID is the CB-Tumblebug node Uid, the target's key.
         example: d44ikdomt0tac4ejrmmg
         type: string
+    required:
+    - infraId
+    - kind
+    - nodeId
+    - nsId
     type: object
   model.TargetSyncResp:
     properties:
@@ -372,6 +377,12 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/model.MetricListResp'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: List metrics
       tags:
       - '[Monitoring] Metrics'
@@ -401,12 +412,20 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "404":
           description: Unknown metric or target
           schema:
             $ref: '#/definitions/model.SimpleMsg'
         "422":
           description: Metric is not supported
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/model.SimpleMsg'
         "502":
@@ -417,6 +436,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: Query a metric
       tags:
       - '[Monitoring] Metrics'
@@ -462,6 +483,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/model.TargetListResp'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "500":
           description: Internal Server Error
           schema:
@@ -470,6 +495,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: List targets
       tags:
       - '[Monitoring] Targets'
@@ -499,12 +526,20 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "404":
           description: The node is not in CB-Tumblebug
           schema:
             $ref: '#/definitions/model.SimpleMsg'
         "422":
           description: Kind is not supported
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/model.SimpleMsg'
         "502":
@@ -515,6 +550,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: Register a target
       tags:
       - '[Monitoring] Targets'
@@ -536,6 +573,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "404":
           description: Not Found
           schema:
@@ -548,6 +589,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: Delete a target
       tags:
       - '[Monitoring] Targets'
@@ -567,6 +610,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/model.TargetInfo'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "404":
           description: Not Found
           schema:
@@ -579,6 +626,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: Get a target
       tags:
       - '[Monitoring] Targets'
@@ -601,6 +650,10 @@ paths:
           description: Collector configuration (YAML)
           schema:
             type: string
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "404":
           description: Not Found
           schema:
@@ -613,6 +666,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: Get a target's collector configuration
       tags:
       - '[Monitoring] Targets'
@@ -635,6 +690,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/model.TargetMetricListResp'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "404":
           description: Not Found
           schema:
@@ -647,6 +706,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: List a target's metrics
       tags:
       - '[Monitoring] Metrics'
@@ -664,6 +725,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/model.TargetSyncResp'
+        "401":
+          description: Missing or wrong bearer token
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
         "409":
           description: A sync is already running
           schema:
@@ -680,6 +745,8 @@ paths:
           description: Service Unavailable
           schema:
             $ref: '#/definitions/model.SimpleMsg'
+      security:
+      - BearerAuth: []
       summary: Sync targets with the management platform
       tags:
       - '[Monitoring] Targets'

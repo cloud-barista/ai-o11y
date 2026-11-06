@@ -21,6 +21,11 @@ const docTemplate = `{
     "paths": {
         "/metrics": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "List the metric catalog: the common fields, named and meant as OpenTelemetry names them, and the fields of one collector's own, each with the attribute that splits it and, for a field no collector provides yet, the reason.",
                 "produces": [
                     "application/json"
@@ -36,12 +41,23 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/model.MetricListResp"
                         }
+                    },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
                     }
                 }
             }
         },
         "/query": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Query one metric over targets named by id or selected by their attributes, as one value per series or as a graph from start to end. The answer carries the series and the targets they belong to.",
                 "consumes": [
                     "application/json"
@@ -78,6 +94,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/model.SimpleMsg"
                         }
                     },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
                     "404": {
                         "description": "Unknown metric or target",
                         "schema": {
@@ -86,6 +108,12 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Metric is not supported",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/model.SimpleMsg"
                         }
@@ -134,6 +162,11 @@ const docTemplate = `{
         },
         "/targets": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "List the registered targets. Every query parameter is a condition on an attribute, all of which must match exactly: a common field (kind, name, provider, region, os, gpuCount, gpuModel) or a platform attribute such as nsId, infraId or nodeId.",
                 "produces": [
                     "application/json"
@@ -164,6 +197,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/model.TargetListResp"
                         }
                     },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -179,6 +218,11 @@ const docTemplate = `{
                 }
             },
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Register a target when its agent is installed. The body names the node as ai-app names a deployment target and carries its description from CB-Tumblebug; without uid the description is read from CB-Tumblebug. Registering a target again replaces its description.",
                 "consumes": [
                     "application/json"
@@ -215,6 +259,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/model.SimpleMsg"
                         }
                     },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
                     "404": {
                         "description": "The node is not in CB-Tumblebug",
                         "schema": {
@@ -223,6 +273,12 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Kind is not supported",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/model.SimpleMsg"
                         }
@@ -244,6 +300,11 @@ const docTemplate = `{
         },
         "/targets/sync": {
             "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Bring the target table in step with CB-Tumblebug: describe every listed target again, and delete a target missing from the listing only when CB-Tumblebug answers that it is gone. Targets are never added here; they are registered at agent install. If the listing fails, nothing changes.",
                 "produces": [
                     "application/json"
@@ -258,6 +319,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/model.TargetSyncResp"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
                         }
                     },
                     "409": {
@@ -289,6 +356,11 @@ const docTemplate = `{
         },
         "/targets/{targetId}": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Get one registered target by its id.",
                 "produces": [
                     "application/json"
@@ -314,6 +386,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/model.TargetInfo"
                         }
                     },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -335,6 +413,11 @@ const docTemplate = `{
                 }
             },
             "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Delete a registered target, as when its agent is removed. Its stored series stay in the backend.",
                 "produces": [
                     "application/json"
@@ -356,6 +439,12 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
                         "schema": {
                             "$ref": "#/definitions/model.SimpleMsg"
                         }
@@ -383,6 +472,11 @@ const docTemplate = `{
         },
         "/targets/{targetId}/collectorConfig": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Render the OpenTelemetry Collector configuration the target's agent runs: the collectors that apply to it, its entity_id stamped on every series, and the metrics backend to send them to.",
                 "produces": [
                     "application/yaml"
@@ -408,6 +502,12 @@ const docTemplate = `{
                             "type": "string"
                         }
                     },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -431,6 +531,11 @@ const docTemplate = `{
         },
         "/targets/{targetId}/metrics": {
             "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "List the metric catalog as it stands for one target: which fields it has, from the collectors that run on it, and which it does not, with the reason.",
                 "produces": [
                     "application/json"
@@ -454,6 +559,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/model.TargetMetricListResp"
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or wrong bearer token",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
                         }
                     },
                     "404": {
@@ -823,6 +934,12 @@ const docTemplate = `{
         },
         "model.TargetReq": {
             "type": "object",
+            "required": [
+                "infraId",
+                "kind",
+                "nodeId",
+                "nsId"
+            ],
             "properties": {
                 "attributes": {
                     "description": "Attributes are further platform attributes to select the target by.",
@@ -882,7 +999,7 @@ const docTemplate = `{
                     "example": "ap-northeast-2"
                 },
                 "uid": {
-                    "description": "Uid is the CB-Tumblebug node Uid, the target's key.",
+                    "description": "UID is the CB-Tumblebug node Uid, the target's key.",
                     "type": "string",
                     "example": "d44ikdomt0tac4ejrmmg"
                 }

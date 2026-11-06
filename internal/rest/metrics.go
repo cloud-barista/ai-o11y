@@ -24,6 +24,8 @@ import (
 // @Tags [Monitoring] Metrics
 // @Produce json
 // @Success 200 {object} model.MetricListResp
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /metrics [get]
 func (h *handler) RestGetAllMetrics(c echo.Context) error {
 	rows := h.Catalog.Rows()
@@ -56,6 +58,8 @@ func attributeInfo(r monitoring.MetricRow) *model.AttributeInfo {
 // @Failure 404 {object} model.SimpleMsg
 // @Failure 500 {object} model.SimpleMsg
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets/{targetId}/metrics [get]
 func (h *handler) RestGetTargetMetrics(c echo.Context) error {
 	t, ok, err := h.lookup(c)
@@ -127,8 +131,11 @@ func unsupported(r monitoring.MetricRow, t monitoring.Target, running map[string
 // @Failure 400 {object} model.SimpleMsg
 // @Failure 404 {object} model.SimpleMsg "Unknown metric or target"
 // @Failure 422 {object} model.SimpleMsg "Metric is not supported"
+// @Failure 500 {object} model.SimpleMsg
 // @Failure 502 {object} model.SimpleMsg "The metrics backend did not answer"
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /query [post]
 func (h *handler) RestPostQuery(c echo.Context) error {
 	ctx := c.Request().Context()

@@ -33,8 +33,11 @@ var (
 // @Failure 400 {object} model.SimpleMsg
 // @Failure 404 {object} model.SimpleMsg "The node is not in CB-Tumblebug"
 // @Failure 422 {object} model.SimpleMsg "Kind is not supported"
+// @Failure 500 {object} model.SimpleMsg
 // @Failure 502 {object} model.SimpleMsg "CB-Tumblebug did not answer"
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets [post]
 func (h *handler) RestPostTarget(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -138,6 +141,8 @@ func targetInfo(t monitoring.Target) model.TargetInfo {
 // @Success 200 {object} model.TargetListResp
 // @Failure 500 {object} model.SimpleMsg
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets [get]
 func (h *handler) RestGetAllTargets(c echo.Context) error {
 	ctx := c.Request().Context()
@@ -191,6 +196,8 @@ func (h *handler) lookup(c echo.Context) (monitoring.Target, bool, error) {
 // @Failure 404 {object} model.SimpleMsg
 // @Failure 500 {object} model.SimpleMsg
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets/{targetId} [get]
 func (h *handler) RestGetTarget(c echo.Context) error {
 	t, ok, err := h.lookup(c)
@@ -211,6 +218,8 @@ func (h *handler) RestGetTarget(c echo.Context) error {
 // @Failure 404 {object} model.SimpleMsg
 // @Failure 500 {object} model.SimpleMsg
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets/{targetId} [delete]
 func (h *handler) RestDeleteTarget(c echo.Context) error {
 	t, ok, err := h.lookup(c)
@@ -235,6 +244,8 @@ func (h *handler) RestDeleteTarget(c echo.Context) error {
 // @Failure 404 {object} model.SimpleMsg
 // @Failure 500 {object} model.SimpleMsg
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets/{targetId}/collectorConfig [get]
 func (h *handler) RestGetTargetCollectorConfig(c echo.Context) error {
 	if h.Backend == nil || h.Backend.WriteEndpoint().URL == "" {
@@ -263,6 +274,8 @@ func (h *handler) RestGetTargetCollectorConfig(c echo.Context) error {
 // @Failure 500 {object} model.SimpleMsg
 // @Failure 502 {object} model.SimpleMsg "The management platform could not be listed; nothing changed"
 // @Failure 503 {object} model.SimpleMsg
+// @Security BearerAuth
+// @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets/sync [post]
 func (h *handler) RestPostTargetSync(c echo.Context) error {
 	if h.Syncer == nil {
