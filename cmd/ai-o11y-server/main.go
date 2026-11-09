@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/signal"
@@ -174,18 +175,27 @@ func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, 
 		write[i] = monitoring.Endpoint{URL: u}
 	}
 	limits := query.ChunkLimits{MaxIDs: bc.MaxIDs, MaxConcurrent: bc.MaxConcurrent}
+	var headers map[string]string
+	if bc.QueryUsername != "" {
+		headers = map[string]string{"Authorization": basicAuth(bc.QueryUsername, bc.QueryPassword)}
+	}
 	switch bc.Provider {
 	case config.BackendVictoria:
 		return victoria.New(victoria.Config{
-			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits,
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits, Headers: headers,
 			PartialResponse: bc.PartialResponse,
 		}, renderer)
 	case config.BackendThanos:
 		return thanos.New(thanos.Config{
-			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits,
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits, Headers: headers,
 			PartialResponse: bc.PartialResponse,
 		}, renderer)
 	default:
 		return nil, fmt.Errorf("unknown metrics backend %q", bc.Provider)
 	}
+}
+
+// basicAuth is the Authorization header value of a basic auth account.
+func basicAuth(username, password string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
 }

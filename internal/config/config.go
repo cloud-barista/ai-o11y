@@ -57,6 +57,10 @@ type BackendConfig struct {
 	// another fails, where the backend has several stores behind one query
 	// address. Off by default: any failing store fails the query.
 	PartialResponse bool
+	// QueryUsername and QueryPassword are the basic auth account queries are
+	// sent with. Both empty sends none; one without the other is an error.
+	QueryUsername string
+	QueryPassword string
 }
 
 // Metrics backend providers AIO11Y_BACKEND selects.
@@ -143,6 +147,8 @@ func Load() (*Config, error) {
 		"backend.max_concurrent",
 		"backend.max_ids",
 		"backend.partial_response",
+		"backend.query_username",
+		"backend.query_password",
 		"collector.telemetry_port",
 	} {
 		if err := v.BindEnv(key); err != nil {
@@ -203,10 +209,15 @@ func Load() (*Config, error) {
 			MaxConcurrent:   maxConcurrent,
 			MaxIDs:          maxIDs,
 			PartialResponse: v.GetBool("backend.partial_response"),
+			QueryUsername:   v.GetString("backend.query_username"),
+			QueryPassword:   v.GetString("backend.query_password"),
 		},
 	}
 	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {
 		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
+	}
+	if (cfg.Backend.QueryUsername == "") != (cfg.Backend.QueryPassword == "") {
+		return nil, fmt.Errorf("%s_BACKEND_QUERY_USERNAME and _QUERY_PASSWORD must be set together", envPrefix)
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)

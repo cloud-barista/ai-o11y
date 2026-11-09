@@ -5,6 +5,18 @@ import (
 	"time"
 )
 
+func TestQueryAccountSetTogether(t *testing.T) {
+	t.Setenv("AIO11Y_BACKEND_QUERY_USERNAME", "reader")
+	t.Setenv("AIO11Y_BACKEND_QUERY_PASSWORD", "")
+	if _, err := Load(); err == nil {
+		t.Error("a query username without a password loaded")
+	}
+	t.Setenv("AIO11Y_BACKEND_QUERY_PASSWORD", "pw")
+	if cfg, err := Load(); err != nil || cfg.Backend.QueryUsername != "reader" {
+		t.Errorf("Load = %v", err)
+	}
+}
+
 func TestBackendTimeouts(t *testing.T) {
 	t.Setenv("AIO11Y_BACKEND_TIMEOUT", "")
 	t.Setenv("AIO11Y_BACKEND_CONNECT_TIMEOUT", "3s")
