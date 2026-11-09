@@ -88,7 +88,8 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   keeps no queue, so samples are dropped while every address fails.
 - **Accounts**: basic auth only. Collectors read the write account's password
   from `AIO11Y_WRITE_PASSWORD` on their host; a collector without it still
-  starts, and every write is refused.
+  starts, and every write is refused. Over plain HTTP the accounts travel in
+  clear text; outside a private network the backend needs TLS in front.
 - **Metric catalog**: see the known limits in
   [docs/metric-catalog.md](docs/metric-catalog.md).
 

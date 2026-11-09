@@ -37,9 +37,9 @@ const WritePasswordEnv = "AIO11Y_WRITE_PASSWORD"
 // Render builds the collector configuration for one target: the fragments of
 // every agent-path kind that applies to it, the processor that stamps its
 // identity labels, and one metrics pipeline to the endpoints: one endpoint as
-// one exporter, several behind a failover connector (see exportTo). Two fragments that
-// define the same component id are an error rather than one silently
-// replacing the other. The output is YAML with sorted keys, so the same
+// one exporter, several behind a failover connector (see exportTo). Two
+// fragments that define the same component id are an error rather than one
+// silently replacing the other. The output is YAML with sorted keys, so the same
 // inputs always render the same bytes.
 func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.MetricCatalog, endpoints []monitoring.Endpoint, opts Options) ([]byte, error) {
 	if len(endpoints) == 0 {

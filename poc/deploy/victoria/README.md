@@ -15,6 +15,8 @@ ai-o11y ──query─▶ vmauth-1 / vmauth-2 ──▶ storage A or B
 vmauth has two accounts: a writer that may only write, for collectors, and a
 reader that may only query, for ai-o11y. Their names and passwords are in
 `.env` (`node.env` on VMs); change the sample passwords before exposing vmauth.
+The samples speak plain HTTP, so the passwords travel in clear text: put TLS in
+front of vmauth before it is reachable from outside a private network.
 
 ai-o11y settings:
 

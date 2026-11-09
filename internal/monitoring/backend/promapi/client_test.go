@@ -256,8 +256,9 @@ func TestAllAddressesFail(t *testing.T) {
 	}
 }
 
-// TestTimeoutSpansAddresses: the timeout bounds a request across addresses,
-// so a hanging first address does not get a fresh timeout per address.
+// TestTimeoutSpansAddresses: the timeout bounds a request across addresses
+// and retries, so a hanging first address does not get a fresh timeout per
+// address.
 func TestTimeoutSpansAddresses(t *testing.T) {
 	release := make(chan struct{})
 	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

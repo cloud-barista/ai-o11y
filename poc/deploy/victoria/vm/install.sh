@@ -18,7 +18,8 @@ set -a
 # shellcheck source=/dev/null
 . "$env_file"
 set +a
-for v in VM_VERSION SELF_ADDR PEER_ADDR DATA_DIR; do
+for v in VM_VERSION SELF_ADDR PEER_ADDR DATA_DIR \
+	VMAUTH_WRITER_USERNAME VMAUTH_WRITER_PASSWORD VMAUTH_READER_USERNAME VMAUTH_READER_PASSWORD; do
 	[[ -n ${!v:-} ]] || { echo "$v is not set in $env_file" >&2; exit 1; }
 done
 

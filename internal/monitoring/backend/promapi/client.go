@@ -142,12 +142,15 @@ func (c *Client) query(ctx context.Context, path string, form url.Values) ([]mon
 
 // post sends form to path with the configured parameters and decodes the data
 // of a successful answer into out. A 429 is retried with backoff
-// (internal/retry); queries are reads, so sending one again is safe.
+// (internal/retry); queries are reads, so sending one again is safe. The
+// timeout bounds the whole request: retries and every address included.
 func (c *Client) post(ctx context.Context, path string, form url.Values, out any) error {
 	for name, values := range c.cfg.Params {
 		form[name] = values
 	}
 	body := form.Encode()
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout+httpSlack)
+	defer cancel()
 	return c.retry.Do(ctx, func() (bool, time.Duration, error) {
 		after, err := c.postAny(ctx, path, body, out)
 		var apiErr *APIError
@@ -164,8 +167,6 @@ func (c *Client) post(ctx context.Context, path string, form url.Values, out any
 // own fault and would be the same at every address, so it is returned at
 // once, as is a 429, which post retries from the first address.
 func (c *Client) postAny(ctx context.Context, path, body string, out any) (time.Duration, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout+httpSlack)
-	defer cancel()
 	var (
 		after time.Duration
 		err   error
