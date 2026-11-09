@@ -240,6 +240,17 @@ type Endpoint struct {
 	URL      string
 	Protocol string
 	Headers  map[string]string
+	// BasicAuth, when set, is the account collectors write with.
+	BasicAuth *BasicAuth
+}
+
+// BasicAuth is a basic auth account a collector writes with. ai-o11y knows
+// only the username: the password is read on the collector's host from the
+// environment variable PasswordEnv, so it is in no configuration ai-o11y
+// renders or serves.
+type BasicAuth struct {
+	Username    string
+	PasswordEnv string
 }
 
 // BackendCaps lists what a backend supports, such as "promql" or "targetsAPI".

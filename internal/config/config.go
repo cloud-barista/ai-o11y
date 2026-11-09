@@ -61,6 +61,10 @@ type BackendConfig struct {
 	// sent with. Both empty sends none; one without the other is an error.
 	QueryUsername string
 	QueryPassword string
+	// WriteUsername is the basic auth account collectors write with. Its
+	// password is not set here: each collector reads it from its own host's
+	// environment.
+	WriteUsername string
 }
 
 // Metrics backend providers AIO11Y_BACKEND selects.
@@ -149,6 +153,7 @@ func Load() (*Config, error) {
 		"backend.partial_response",
 		"backend.query_username",
 		"backend.query_password",
+		"backend.write_username",
 		"collector.telemetry_port",
 	} {
 		if err := v.BindEnv(key); err != nil {
@@ -211,6 +216,7 @@ func Load() (*Config, error) {
 			PartialResponse: v.GetBool("backend.partial_response"),
 			QueryUsername:   v.GetString("backend.query_username"),
 			QueryPassword:   v.GetString("backend.query_password"),
+			WriteUsername:   v.GetString("backend.write_username"),
 		},
 	}
 	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {

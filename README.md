@@ -86,6 +86,9 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
 - **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s the collector
   keeps no queue, so samples are dropped while every address fails.
+- **Accounts**: basic auth only. Collectors read the write account's password
+  from `AIO11Y_WRITE_PASSWORD` on their host; a collector without it still
+  starts, and every write is refused.
 - **Metric catalog**: see the known limits in
   [docs/metric-catalog.md](docs/metric-catalog.md).
 

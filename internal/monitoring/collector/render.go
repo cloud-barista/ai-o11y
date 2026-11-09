@@ -26,6 +26,14 @@ const ExporterOTLPHTTP = "otlp_http"
 // and moves to the next while it fails, used when there are several.
 const ConnectorFailover = "failover"
 
+// ExtensionBasicAuth is the extension that signs an exporter's requests with
+// a basic auth account.
+const ExtensionBasicAuth = "basicauth"
+
+// WritePasswordEnv is the environment variable on a collector's host that
+// holds the password of the write account (AIO11Y_BACKEND_WRITE_USERNAME).
+const WritePasswordEnv = "AIO11Y_WRITE_PASSWORD"
+
 // Render builds the collector configuration for one target: the fragments of
 // every agent-path kind that applies to it, the processor that stamps its
 // identity labels, and one metrics pipeline to the endpoints: one endpoint as
@@ -40,6 +48,9 @@ func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.
 	for _, e := range endpoints {
 		if e.URL == "" {
 			return nil, errors.New("collector endpoint has no URL")
+		}
+		if a := e.BasicAuth; a != nil && (a.Username == "" || a.PasswordEnv == "") {
+			return nil, errors.New("collector endpoint account needs a username and a password variable")
 		}
 	}
 	identity, err := monitoring.IdentityFragment(t)
@@ -104,15 +115,21 @@ func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.
 	if out.connectors != nil {
 		cfg["connectors"] = out.connectors
 	}
+	if len(out.extensions) > 0 {
+		cfg["extensions"] = out.extensions
+		cfg["service"].(map[string]any)["extensions"] = slices.Sorted(maps.Keys(out.extensions))
+	}
 	return yaml.Marshal(cfg)
 }
 
 // output is where the metrics pipeline ends: head is the component it exports
-// to, with the exporters, connectors and extra pipelines that come with it.
+// to, with the exporters, connectors, extensions and extra pipelines that come
+// with it.
 type output struct {
 	head       string
 	exporters  map[string]any
 	connectors map[string]any
+	extensions map[string]any
 	pipelines  map[string]any
 }
 
@@ -125,17 +142,16 @@ type output struct {
 // nothing is kept.
 func exportTo(endpoints []monitoring.Endpoint) output {
 	if len(endpoints) == 1 {
-		return output{
-			head:      ExporterOTLPHTTP,
-			exporters: map[string]any{ExporterOTLPHTTP: exporterConfig(endpoints[0])},
-		}
+		out := output{head: ExporterOTLPHTTP, extensions: map[string]any{}}
+		out.exporters = map[string]any{ExporterOTLPHTTP: exporterConfig(endpoints[0], ExtensionBasicAuth, out.extensions)}
+		return out
 	}
-	out := output{head: ConnectorFailover, exporters: map[string]any{}, pipelines: map[string]any{}}
+	out := output{head: ConnectorFailover, exporters: map[string]any{}, extensions: map[string]any{}, pipelines: map[string]any{}}
 	levels := make([]any, 0, len(endpoints))
 	for i, e := range endpoints {
 		exporter := fmt.Sprintf("%s/%d", ExporterOTLPHTTP, i)
 		pipeline := fmt.Sprintf("metrics/%d", i)
-		cfg := exporterConfig(e)
+		cfg := exporterConfig(e, fmt.Sprintf("%s/%d", ExtensionBasicAuth, i), out.extensions)
 		cfg["sending_queue"] = map[string]any{"enabled": false}
 		cfg["retry_on_failure"] = map[string]any{"enabled": false}
 		out.exporters[exporter] = cfg
@@ -149,10 +165,20 @@ func exportTo(endpoints []monitoring.Endpoint) output {
 	return out
 }
 
-func exporterConfig(e monitoring.Endpoint) map[string]any {
+// exporterConfig is the exporter for e. An account adds a basic auth
+// extension under authID to extensions, its password taken from the
+// collector host's environment when the collector starts.
+func exporterConfig(e monitoring.Endpoint, authID string, extensions map[string]any) map[string]any {
 	cfg := map[string]any{"endpoint": e.URL}
 	if len(e.Headers) > 0 {
 		cfg["headers"] = maps.Clone(e.Headers)
+	}
+	if a := e.BasicAuth; a != nil {
+		extensions[authID] = map[string]any{"client_auth": map[string]any{
+			"username": a.Username,
+			"password": "${env:" + a.PasswordEnv + "}",
+		}}
+		cfg["auth"] = map[string]any{"authenticator": authID}
 	}
 	return cfg
 }

@@ -246,3 +246,30 @@ func TestRenderFailover(t *testing.T) {
 	}
 	checkGolden(t, "vm-failover.golden.yaml", got)
 }
+
+// TestRenderWriteAccount pins the configuration for write endpoints with an
+// account: a basic auth extension per exporter whose password is an
+// environment reference, never the password itself.
+func TestRenderWriteAccount(t *testing.T) {
+	withAuth := make([]monitoring.Endpoint, len(failover))
+	for i, e := range failover {
+		e.BasicAuth = &monitoring.BasicAuth{Username: "writer", PasswordEnv: WritePasswordEnv}
+		withAuth[i] = e
+	}
+	got, err := Render(vm(), kinds, builtin(t), withAuth, Options{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	checkGolden(t, "vm-failover-auth.golden.yaml", got)
+	if !strings.Contains(string(got), "${env:"+WritePasswordEnv+"}") {
+		t.Error("the password is not taken from the environment")
+	}
+	single, err := Render(vm(), kinds, builtin(t), withAuth[:1], Options{})
+	if err != nil || !strings.Contains(string(single), "authenticator: "+ExtensionBasicAuth+"\n") {
+		t.Errorf("single endpoint with an account = %v\n%s", err, single)
+	}
+	bad := []monitoring.Endpoint{{URL: "http://vmauth:8427/opentelemetry", BasicAuth: &monitoring.BasicAuth{Username: "writer"}}}
+	if _, err := Render(vm(), kinds, builtin(t), bad, Options{}); err == nil {
+		t.Error("an account without a password variable rendered")
+	}
+}

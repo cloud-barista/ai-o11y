@@ -173,6 +173,9 @@ func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, 
 	write := make([]monitoring.Endpoint, len(bc.WriteURLs))
 	for i, u := range bc.WriteURLs {
 		write[i] = monitoring.Endpoint{URL: u}
+		if bc.WriteUsername != "" {
+			write[i].BasicAuth = &monitoring.BasicAuth{Username: bc.WriteUsername, PasswordEnv: collector.WritePasswordEnv}
+		}
 	}
 	limits := query.ChunkLimits{MaxIDs: bc.MaxIDs, MaxConcurrent: bc.MaxConcurrent}
 	var headers map[string]string

@@ -21,8 +21,9 @@ func TestRenderedConfigValidates(t *testing.T) {
 	windows := vm()
 	windows.OS = "windows"
 	telemetryPorts := map[string]int{"gpu vm": 18889}
-	endpoints := map[string][]monitoring.Endpoint{"failover vm": failover}
-	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM(), "failover vm": vm()} {
+	authed := []monitoring.Endpoint{{URL: failover[0].URL, BasicAuth: &monitoring.BasicAuth{Username: "writer", PasswordEnv: WritePasswordEnv}}}
+	endpoints := map[string][]monitoring.Endpoint{"failover vm": failover, "account vm": authed}
+	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM(), "failover vm": vm(), "account vm": vm()} {
 		ep := endpoint
 		if e, ok := endpoints[name]; ok {
 			ep = e
