@@ -90,7 +90,7 @@ func TestAttributeSplit(t *testing.T) {
 }
 
 // TestGPUFields runs the GPU fields on series as the nvidia_gpu receiver's
-// nvidia-smi source writes them, after the OTLP translation.
+// nvidia-smi source writes them.
 func TestGPUFields(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
   {__name__="nvidia_smi.utilization.gpu",entity_id="a",uuid="GPU-1",index="0",name="T4"} 40x20

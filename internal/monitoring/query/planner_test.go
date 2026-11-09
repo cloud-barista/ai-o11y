@@ -85,7 +85,7 @@ func testData() string {
 		fmt.Fprintf(&b, "  {__name__=\"system.cpu.time\",entity_id=%q,state=\"user\",cpu=\"0\"} 0+%dx240\n", id, 60-idle)
 		fmt.Fprintf(&b, "  {__name__=\"system.memory.utilization\",entity_id=%q,state=\"used\"} %.3f+0.001x240\n", id, 0.1+0.07*float64(i))
 		for g := range 2 {
-			fmt.Fprintf(&b, "  nvidia_smi_utilization_gpu_ratio{entity_id=%q,uuid=\"gpu%d\"} %.3f+0.0005x240\n", id, g, 0.05+0.11*float64(i)+0.03*float64(g))
+			fmt.Fprintf(&b, "  {__name__=\"nvidia_smi.utilization.gpu\",entity_id=%q,uuid=\"gpu%d\"} %.3f+0.0005x240\n", id, g, 0.05+0.11*float64(i)+0.03*float64(g))
 		}
 	}
 	return b.String()
@@ -116,7 +116,7 @@ func testRenderer(t *testing.T) PromQL {
 	rows := append(catalog.Builtin(), monitoring.MetricRow{
 		Name: "test.gpu.utilization", Area: "gpu", Unit: "ratio", Kind: monitoring.KindGauge,
 		Dimension: "uuid", DimensionName: "gpu.uuid",
-		Exprs: map[string]string{catalog.CollectorNvidiaSMI: `max by (entity_id, uuid) (nvidia_smi_utilization_gpu_ratio{$sel})`},
+		Exprs: map[string]string{catalog.CollectorNvidiaSMI: `max by (entity_id, uuid) ({"nvidia_smi.utilization.gpu", $sel})`},
 	})
 	c, err := catalog.New(rows)
 	if err != nil {

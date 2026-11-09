@@ -1,29 +1,5 @@
 package monitoring
 
-import (
-	"fmt"
-	"regexp"
-	"strings"
-)
-
-// labelNameRE is the classic Prometheus label name syntax. Names outside it,
-// such as "cloud.provider", are rewritten by the backend's OTLP translation
-// ("cloud_provider") or refused (Mimir), so queries would have to guess the
-// stored name.
-var labelNameRE = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
-
-// ValidateLabelName reports whether name can be stored and queried unchanged
-// by every backend: classic syntax and not reserved by Prometheus ("__").
-func ValidateLabelName(name string) error {
-	if !labelNameRE.MatchString(name) {
-		return fmt.Errorf("label name %q must match %s", name, labelNameRE)
-	}
-	if strings.HasPrefix(name, "__") {
-		return fmt.Errorf("label name %q is reserved", name)
-	}
-	return nil
-}
-
 // IdentityProcessor is the collector processor that stamps a target's key.
 const IdentityProcessor = "attributes/identity"
 

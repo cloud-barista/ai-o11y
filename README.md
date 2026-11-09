@@ -2,8 +2,9 @@
 
 Monitoring control plane for the AI-MCMP platform. It keeps the monitoring
 targets, renders the configuration of the collector that runs on each target,
-and answers metric queries over a Prometheus-family backend (Thanos or VictoriaMetrics). Samples go
-from the collectors to the backend, never through this service.
+and answers metric queries over a Prometheus-family backend (Thanos or
+VictoriaMetrics). Samples go from the collectors to the backend, never through
+this service.
 
 ```
 CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / VictoriaMetrics

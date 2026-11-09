@@ -28,9 +28,8 @@ const ConnectorFailover = "failover"
 
 // Render builds the collector configuration for one target: the fragments of
 // every agent-path kind that applies to it, the processor that stamps its
-// identity labels, and one metrics pipeline to the endpoints. One endpoint is
-// written as one exporter; several go behind a failover connector (see
-// exportTo). Two fragments that
+// identity labels, and one metrics pipeline to the endpoints: one endpoint as
+// one exporter, several behind a failover connector (see exportTo). Two fragments that
 // define the same component id are an error rather than one silently
 // replacing the other. The output is YAML with sorted keys, so the same
 // inputs always render the same bytes.

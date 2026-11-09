@@ -33,7 +33,6 @@ for archive in victoria-metrics vmutils; do
 	grep " $file\$" "${file%.tar.gz}_checksums.txt" | sha256sum -c -
 	tar -xzf "$file"
 done
-sha256sum -c --ignore-missing ./*_checksums.txt
 
 install -m 0755 victoria-metrics-prod /usr/local/bin/victoria-metrics
 install -m 0755 vmagent-prod /usr/local/bin/vmagent

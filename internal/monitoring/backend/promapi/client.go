@@ -164,10 +164,19 @@ func (c *Client) postAny(ctx context.Context, path, body string, out any) (time.
 			return after, err
 		}
 		if i+1 < len(c.baseURLs) {
-			log.Warn().Err(err).Str("path", path).Str("next", c.baseURLs[i+1]).Msg("Query API address failed, trying the next one")
+			log.Warn().Err(err).Str("path", path).Str("next", redact(c.baseURLs[i+1])).Msg("Query API address failed, trying the next one")
 		}
 	}
 	return after, err
+}
+
+// redact hides the password of an address with user info, for logs.
+func redact(addr string) string {
+	u, err := url.Parse(addr)
+	if err != nil {
+		return "(unparsable address)"
+	}
+	return u.Redacted()
 }
 
 // failsOver tells whether err is worth sending the request to another address.

@@ -58,15 +58,14 @@ var hmReporting = map[string]string{
 // renaming the values whose OpenTelemetry name differs (rename maps the
 // hostmetrics value to it).
 func relabel(expr, from, attr string, rename map[string]string) string {
-	to := attr
-	out := fmt.Sprintf(`label_replace(%s, %q, "$1", %q, "(.*)")`, expr, to, from)
+	out := fmt.Sprintf(`label_replace(%s, %q, "$1", %q, "(.*)")`, expr, attr, from)
 	keys := make([]string, 0, len(rename))
 	for k := range rename {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
 	for _, k := range keys {
-		out = fmt.Sprintf(`label_replace(%s, %q, %q, %q, %q)`, out, to, rename[k], from, k)
+		out = fmt.Sprintf(`label_replace(%s, %q, %q, %q, %q)`, out, attr, rename[k], from, k)
 	}
 	return out
 }
