@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 User=victoria
+EnvironmentFile=/etc/aio11y-victoria/node.env
 ExecStart=/usr/local/bin/vmauth -httpListenAddr=:8427 -auth.config=/etc/aio11y-victoria/vmauth.yml
 Restart=always
 LimitNOFILE=65536

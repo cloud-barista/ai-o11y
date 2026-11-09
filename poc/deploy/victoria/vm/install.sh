@@ -41,7 +41,7 @@ install -m 0755 vmauth-prod /usr/local/bin/vmauth
 id victoria >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin victoria
 install -d -o victoria -g victoria "$DATA_DIR" "$DATA_DIR/storage" "$DATA_DIR/vmagent"
 install -d /etc/aio11y-victoria
-install -m 0644 "$env_file" /etc/aio11y-victoria/node.env
+install -m 0600 -o victoria -g victoria "$env_file" /etc/aio11y-victoria/node.env
 sed -e "s|\${SELF_ADDR}|$SELF_ADDR|g" -e "s|\${PEER_ADDR}|$PEER_ADDR|g" \
 	"$here/vmauth.yml.tmpl" > /etc/aio11y-victoria/vmauth.yml
 for unit in victoria-metrics vmagent vmauth; do

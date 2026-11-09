@@ -6,6 +6,10 @@
 #   AIO11Y_BACKEND=victoria
 #   AIO11Y_BACKEND_QUERY_URL=http://<host>:${VMAUTH_1_PORT},http://<host>:${VMAUTH_2_PORT}
 #   AIO11Y_BACKEND_WRITE_URL=http://<host>:${VMAUTH_1_PORT}/opentelemetry,http://<host>:${VMAUTH_2_PORT}/opentelemetry
+#   AIO11Y_BACKEND_QUERY_USERNAME=${VMAUTH_READER_USERNAME}
+#   AIO11Y_BACKEND_QUERY_PASSWORD=${VMAUTH_READER_PASSWORD}
+#   AIO11Y_BACKEND_WRITE_USERNAME=${VMAUTH_WRITER_USERNAME}
+# and AIO11Y_WRITE_PASSWORD=${VMAUTH_WRITER_PASSWORD} where each collector runs.
 #
 # vmagent keeps the names collectors send (system.cpu.time), the names
 # ai-o11y's metric catalog queries: -opentelemetry.usePrometheusNaming stays
@@ -49,12 +53,22 @@ services:
     image: victoriametrics/vmauth:${VM_VERSION}
     command: [-auth.config=/etc/vmauth/auth.yml]
     volumes: [./vmauth-1.yml:/etc/vmauth/auth.yml:ro]
+    environment:
+      VMAUTH_WRITER_USERNAME: ${VMAUTH_WRITER_USERNAME}
+      VMAUTH_WRITER_PASSWORD: ${VMAUTH_WRITER_PASSWORD}
+      VMAUTH_READER_USERNAME: ${VMAUTH_READER_USERNAME}
+      VMAUTH_READER_PASSWORD: ${VMAUTH_READER_PASSWORD}
     ports: ["${VMAUTH_1_PORT}:8427"]
     depends_on: [vmagent-1, vmagent-2]
   vmauth-2:
     image: victoriametrics/vmauth:${VM_VERSION}
     command: [-auth.config=/etc/vmauth/auth.yml]
     volumes: [./vmauth-2.yml:/etc/vmauth/auth.yml:ro]
+    environment:
+      VMAUTH_WRITER_USERNAME: ${VMAUTH_WRITER_USERNAME}
+      VMAUTH_WRITER_PASSWORD: ${VMAUTH_WRITER_PASSWORD}
+      VMAUTH_READER_USERNAME: ${VMAUTH_READER_USERNAME}
+      VMAUTH_READER_PASSWORD: ${VMAUTH_READER_PASSWORD}
     ports: ["${VMAUTH_2_PORT}:8427"]
     depends_on: [vmagent-1, vmagent-2]
 

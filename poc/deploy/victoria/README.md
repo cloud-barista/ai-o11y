@@ -12,13 +12,24 @@ collector ─1st─▶ vmauth-1 ─┐                ┌─▶ storage A
 ai-o11y ──query─▶ vmauth-1 / vmauth-2 ──▶ storage A or B
 ```
 
+vmauth has two accounts: a writer that may only write, for collectors, and a
+reader that may only query, for ai-o11y. Their names and passwords are in
+`.env` (`node.env` on VMs); change the sample passwords before exposing vmauth.
+
 ai-o11y settings:
 
 ```sh
 AIO11Y_BACKEND=victoria
 AIO11Y_BACKEND_QUERY_URL=http://<vmauth-1>:8427,http://<vmauth-2>:8427
 AIO11Y_BACKEND_WRITE_URL=http://<vmauth-1>:8427/opentelemetry,http://<vmauth-2>:8427/opentelemetry
+AIO11Y_BACKEND_QUERY_USERNAME=<reader>
+AIO11Y_BACKEND_QUERY_PASSWORD=<reader password>
+AIO11Y_BACKEND_WRITE_USERNAME=<writer>
 ```
+
+Each collector reads the writer's password from `AIO11Y_WRITE_PASSWORD` in its
+own environment; ai-o11y never holds it. A collector started without it runs,
+but every write is refused (401).
 
 VictoriaMetrics keeps the names collectors send (`system.cpu.time`), the names
 ai-o11y's metric catalog queries; `-opentelemetry.usePrometheusNaming` must

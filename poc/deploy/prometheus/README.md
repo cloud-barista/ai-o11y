@@ -20,3 +20,6 @@ Prometheus keeps the names collectors send (`otlp.translation_strategy:
 NoTranslation` in [prometheus.yml](prometheus.yml)), the names ai-o11y's metric
 catalog queries. A Thanos Receive in place of Prometheus would not do: it
 rewrites the names on the way in.
+
+This sample has no authentication: the Thanos Querier has none of its own, so
+an account for queries needs a proxy in front of it.
