@@ -15,9 +15,6 @@ import (
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/query"
 )
 
-// ProviderName is the name the backend is selected by.
-const ProviderName = "victoria"
-
 // Defaults for the settings left zero.
 const (
 	// DefaultTimeout is VictoriaMetrics' own -search.maxQueryDuration

@@ -175,15 +175,17 @@ func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, 
 	}
 	limits := query.ChunkLimits{MaxIDs: bc.MaxIDs, MaxConcurrent: bc.MaxConcurrent}
 	switch bc.Provider {
-	case victoria.ProviderName:
+	case config.BackendVictoria:
 		return victoria.New(victoria.Config{
 			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, Limits: limits,
 			PartialResponse: bc.PartialResponse,
 		}, renderer)
-	default:
+	case config.BackendThanos:
 		return thanos.New(thanos.Config{
 			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, Limits: limits,
 			PartialResponse: bc.PartialResponse,
 		}, renderer)
+	default:
+		return nil, fmt.Errorf("unknown metrics backend %q", bc.Provider)
 	}
 }

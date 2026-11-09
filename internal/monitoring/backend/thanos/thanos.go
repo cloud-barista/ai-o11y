@@ -14,9 +14,6 @@ import (
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/query"
 )
 
-// ProviderName is the name the backend is registered under.
-const ProviderName = "thanos"
-
 // Defaults for the settings left zero.
 const (
 	// DefaultTimeout is the Thanos Querier's own --query.timeout default.
