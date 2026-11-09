@@ -158,31 +158,32 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 }
 
 // newBackend builds the metrics backend AIO11Y_BACKEND selects. It returns nil
-// when that backend has no query URL, leaving queries and collector
-// configuration unavailable.
+// when no query URL is set, leaving queries and collector configuration
+// unavailable.
 func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, error) {
-	switch cfg.Backend {
+	bc := cfg.Backend
+	if len(bc.QueryURLs) == 0 {
+		log.Warn().Msg("AIO11Y_BACKEND_QUERY_URL is not set: queries and collector configuration are unavailable")
+		return nil, nil
+	}
+	if len(bc.WriteURLs) == 0 {
+		log.Warn().Msg("AIO11Y_BACKEND_WRITE_URL is not set: collector configuration is unavailable")
+	}
+	write := make([]monitoring.Endpoint, len(bc.WriteURLs))
+	for i, u := range bc.WriteURLs {
+		write[i] = monitoring.Endpoint{URL: u}
+	}
+	limits := query.ChunkLimits{MaxIDs: bc.MaxIDs, MaxConcurrent: bc.MaxConcurrent}
+	switch bc.Provider {
 	case victoria.ProviderName:
-		if len(cfg.Victoria.QueryURLs) == 0 {
-			log.Warn().Msg("AIO11Y_VICTORIA_QUERY_URL is not set: queries and collector configuration are unavailable")
-			return nil, nil
-		}
 		return victoria.New(victoria.Config{
-			QueryURLs: cfg.Victoria.QueryURLs,
-			Write:     monitoring.Endpoint{URL: cfg.Victoria.WriteURL},
-			Timeout:   cfg.Victoria.Timeout,
-			Limits:    query.ChunkLimits{MaxIDs: cfg.Victoria.MaxIDs, MaxConcurrent: cfg.Victoria.MaxConcurrent},
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, Limits: limits,
+			PartialResponse: bc.PartialResponse,
 		}, renderer)
 	default:
-		if len(cfg.Thanos.QueryURLs) == 0 {
-			log.Warn().Msg("AIO11Y_THANOS_QUERY_URL is not set: queries and collector configuration are unavailable")
-			return nil, nil
-		}
 		return thanos.New(thanos.Config{
-			QueryURLs:       cfg.Thanos.QueryURLs,
-			Write:           monitoring.Endpoint{URL: cfg.Thanos.WriteURL},
-			PartialResponse: cfg.Thanos.PartialResponse,
-			Timeout:         cfg.Thanos.Timeout,
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, Limits: limits,
+			PartialResponse: bc.PartialResponse,
 		}, renderer)
 	}
 }

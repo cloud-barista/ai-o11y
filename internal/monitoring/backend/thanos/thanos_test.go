@@ -57,14 +57,14 @@ func TestQuerySendsThanosParams(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	b, err := New(Config{QueryURLs: []string{"http://thanos-query:10902"}, Write: monitoring.Endpoint{URL: "http://receive:19291/otlp"}}, renderer(t))
+	b, err := New(Config{QueryURLs: []string{"http://thanos-query:10902"}, Write: []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp"}}}, renderer(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	if got := b.planner.Limits; got.MaxIDs != DefaultMaxIDs || got.MaxConcurrent != DefaultMaxConcurrent {
 		t.Errorf("limits = %+v", got)
 	}
-	if got := b.WriteEndpoint(); got.Protocol != "otlp_http" || got.URL != "http://receive:19291/otlp" {
+	if got := b.WriteEndpoints(); len(got) != 1 || got[0].Protocol != "otlp_http" || got[0].URL != "http://prometheus:9090/api/v1/otlp" {
 		t.Errorf("write endpoint = %+v", got)
 	}
 	if _, err := New(Config{}, renderer(t)); err == nil {

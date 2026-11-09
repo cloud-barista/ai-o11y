@@ -77,7 +77,7 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
 - **Sync**: a sync replaces a target's description with what CB-Tumblebug lists,
   attributes given at registration included.
 - **Backend**: verified against a local Prometheus 3.16 with a Thanos 0.42
-  Sidecar and Querier only. `AIO11Y_THANOS_PARTIAL_RESPONSE` is off for now.
+  Sidecar and Querier only. `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
   The VictoriaMetrics backend is tested against a fake query API only.
 - **Metric catalog**: see the known limits in
   [docs/metric-catalog.md](docs/metric-catalog.md).

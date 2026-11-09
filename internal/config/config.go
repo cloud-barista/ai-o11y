@@ -17,11 +17,7 @@ type Config struct {
 	Auth      AuthConfig
 	Tumblebug TumblebugConfig
 	DB        DBConfig
-	// Backend names the metrics backend provider: "thanos" or "victoria".
-	// Only that provider's settings are read.
-	Backend   string
-	Thanos    ThanosConfig
-	Victoria  VictoriaConfig
+	Backend   BackendConfig
 	Collector CollectorConfig
 }
 
@@ -32,37 +28,29 @@ type CollectorConfig struct {
 	TelemetryPort int
 }
 
-// ThanosConfig is the metrics backend. An empty QueryURL leaves queries and
-// collector configuration unavailable.
-type ThanosConfig struct {
-	// QueryURLs are Thanos Querier HTTP addresses in order of preference,
-	// given as a comma-separated list; a query moves to the next when one
-	// fails.
+// BackendConfig is the metrics backend. The settings are the same whichever
+// provider is selected; a zero value takes the provider's default. An empty
+// query URL leaves queries and collector configuration unavailable.
+type BackendConfig struct {
+	// Provider is "thanos" or "victoria" (AIO11Y_BACKEND).
+	Provider string
+	// QueryURLs are addresses serving the Prometheus query API, in order of
+	// preference, given as a comma-separated list; a query moves to the next
+	// when one cannot be reached or answers with a 5xx.
 	QueryURLs []string
-	// WriteURL is where collectors send samples over OTLP/HTTP: a Prometheus
-	// with a Sidecar or a Thanos Receive, as the deployment is built.
-	WriteURL string
-	// PartialResponse lets a query answer from the stores that respond when
-	// another fails. Off by default: any failing store fails the query.
-	PartialResponse bool
-	Timeout         time.Duration
-}
-
-// VictoriaConfig is the VictoriaMetrics metrics backend. An empty query URL
-// leaves queries and collector configuration unavailable.
-type VictoriaConfig struct {
-	// QueryURLs are addresses serving the Prometheus query API (such as
-	// vmauth or VictoriaMetrics itself) in order of preference, given as a
-	// comma-separated list; a query moves to the next when one fails.
-	QueryURLs []string
-	// WriteURL is where collectors send samples over OTLP/HTTP, such as a
-	// vmauth or vmagent; the collector appends /v1/metrics.
-	WriteURL string
-	Timeout  time.Duration
+	// WriteURLs are where collectors send samples over OTLP/HTTP, in order of
+	// preference, given as a comma-separated list; a collector moves to the
+	// next while one fails. The collector appends /v1/metrics to each.
+	WriteURLs []string
+	Timeout   time.Duration
 	// MaxConcurrent is how many query chunks run at once; MaxIDs is how many
-	// target ids one chunk selects. Zero takes the provider's default.
+	// target ids one chunk selects.
 	MaxConcurrent int
 	MaxIDs        int
+	// PartialResponse lets a query answer from the stores that respond when
+	// another fails, where the backend has several stores behind one query
+	// address. Off by default: any failing store fails the query.
+	PartialResponse bool
 }
 
 // Metrics backend providers AIO11Y_BACKEND selects.
@@ -122,10 +110,8 @@ func Load() (*Config, error) {
 	v.SetDefault("db.connect_timeout", 5*time.Second)
 	v.SetDefault("db.read_timeout", 30*time.Second)
 	v.SetDefault("db.write_timeout", 30*time.Second)
-	v.SetDefault("backend", BackendThanos)
-	v.SetDefault("thanos.partial_response", false)
-	v.SetDefault("thanos.timeout", 2*time.Minute)
-	v.SetDefault("victoria.timeout", 30*time.Second)
+	v.SetDefault("backend.provider", BackendThanos)
+	v.SetDefault("backend.partial_response", false)
 
 	// AutomaticEnv only resolves keys that viper already knows about.
 	for _, key := range []string{
@@ -144,21 +130,22 @@ func Load() (*Config, error) {
 		"db.connect_timeout",
 		"db.read_timeout",
 		"db.write_timeout",
-		"backend",
-		"thanos.query_url",
-		"thanos.write_url",
-		"thanos.partial_response",
-		"thanos.timeout",
-		"victoria.query_url",
-		"victoria.write_url",
-		"victoria.timeout",
-		"victoria.max_concurrent",
-		"victoria.max_ids",
+		"backend.query_url",
+		"backend.write_url",
+		"backend.timeout",
+		"backend.max_concurrent",
+		"backend.max_ids",
+		"backend.partial_response",
 		"collector.telemetry_port",
 	} {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("failed to bind env for %q: %w", key, err)
 		}
+	}
+
+	// The provider is AIO11Y_BACKEND itself, not AIO11Y_BACKEND_PROVIDER.
+	if err := v.BindEnv("backend.provider", envPrefix+"_BACKEND"); err != nil {
+		return nil, fmt.Errorf("failed to bind env for %q: %w", "backend.provider", err)
 	}
 
 	cfg := &Config{
@@ -182,26 +169,21 @@ func Load() (*Config, error) {
 			WriteTimeout:   v.GetDuration("db.write_timeout"),
 		},
 		Collector: CollectorConfig{TelemetryPort: v.GetInt("collector.telemetry_port")},
-		Backend:   strings.ToLower(strings.TrimSpace(v.GetString("backend"))),
-		Thanos: ThanosConfig{
-			QueryURLs:       splitURLs(v.GetString("thanos.query_url")),
-			WriteURL:        v.GetString("thanos.write_url"),
-			PartialResponse: v.GetBool("thanos.partial_response"),
-			Timeout:         v.GetDuration("thanos.timeout"),
-		},
-		Victoria: VictoriaConfig{
-			QueryURLs:     splitURLs(v.GetString("victoria.query_url")),
-			WriteURL:      v.GetString("victoria.write_url"),
-			Timeout:       v.GetDuration("victoria.timeout"),
-			MaxConcurrent: v.GetInt("victoria.max_concurrent"),
-			MaxIDs:        v.GetInt("victoria.max_ids"),
+		Backend: BackendConfig{
+			Provider:        strings.ToLower(strings.TrimSpace(v.GetString("backend.provider"))),
+			QueryURLs:       splitURLs(v.GetString("backend.query_url")),
+			WriteURLs:       splitURLs(v.GetString("backend.write_url")),
+			Timeout:         v.GetDuration("backend.timeout"),
+			MaxConcurrent:   v.GetInt("backend.max_concurrent"),
+			MaxIDs:          v.GetInt("backend.max_ids"),
+			PartialResponse: v.GetBool("backend.partial_response"),
 		},
 	}
-	if cfg.Backend != BackendThanos && cfg.Backend != BackendVictoria {
-		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend)
+	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {
+		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
 	}
-	if cfg.Victoria.MaxConcurrent < 0 || cfg.Victoria.MaxIDs < 0 {
-		return nil, fmt.Errorf("%s_VICTORIA_MAX_CONCURRENT and %s_VICTORIA_MAX_IDS must not be negative", envPrefix, envPrefix)
+	if cfg.Backend.Timeout < 0 || cfg.Backend.MaxConcurrent < 0 || cfg.Backend.MaxIDs < 0 {
+		return nil, fmt.Errorf("%s_BACKEND_TIMEOUT, _MAX_CONCURRENT and _MAX_IDS must not be negative", envPrefix)
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)

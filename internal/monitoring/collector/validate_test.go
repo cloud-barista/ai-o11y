@@ -21,8 +21,13 @@ func TestRenderedConfigValidates(t *testing.T) {
 	windows := vm()
 	windows.OS = "windows"
 	telemetryPorts := map[string]int{"gpu vm": 18889}
-	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM()} {
-		out, err := Render(target, kinds, builtin(t), endpoint, Options{TelemetryPort: telemetryPorts[name]})
+	endpoints := map[string][]monitoring.Endpoint{"failover vm": failover}
+	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM(), "failover vm": vm()} {
+		ep := endpoint
+		if e, ok := endpoints[name]; ok {
+			ep = e
+		}
+		out, err := Render(target, kinds, builtin(t), ep, Options{TelemetryPort: telemetryPorts[name]})
 		if err != nil {
 			t.Fatalf("%s: Render: %v", name, err)
 		}

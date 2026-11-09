@@ -8,6 +8,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/promapi"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/query"
@@ -38,11 +40,16 @@ type Config struct {
 	// "http://vmauth:8427", in order of preference; a query moves to the next
 	// when one cannot be reached or answers with a 5xx.
 	QueryURLs []string
-	// Write is where collectors send samples (OTLP over HTTP), such as a
-	// vmauth or vmagent in front of the storage.
-	Write   monitoring.Endpoint
+	// Write is where collectors send samples (OTLP over HTTP), in order of
+	// preference, such as vmauths in front of the storage. VictoriaMetrics
+	// keeps the names collectors send by default, which the metric catalog
+	// queries; -opentelemetry.usePrometheusNaming must stay off.
+	Write   []monitoring.Endpoint
 	Timeout time.Duration
-	Limits  query.ChunkLimits
+	// PartialResponse has no counterpart in single-node VictoriaMetrics, which
+	// answers from its one store; it is accepted and ignored.
+	PartialResponse bool
+	Limits          query.ChunkLimits
 	// Headers are set on every query request.
 	Headers map[string]string
 }
@@ -51,7 +58,7 @@ type Config struct {
 // Deduplication of replicated samples is a server setting
 // (-dedup.minScrapeInterval), so no query parameter asks for it.
 type Backend struct {
-	write   monitoring.Endpoint
+	write   []monitoring.Endpoint
 	client  *promapi.Client
 	planner query.Planner
 }
@@ -64,6 +71,9 @@ func New(cfg Config, renderer query.PromQL) (*Backend, error) {
 	if len(cfg.QueryURLs) == 0 {
 		return nil, errors.New("victoria query URL is empty")
 	}
+	if cfg.PartialResponse {
+		log.Warn().Msg("Partial responses do not apply to single-node VictoriaMetrics; the setting is ignored")
+	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = DefaultTimeout
 	}
@@ -73,8 +83,12 @@ func New(cfg Config, renderer query.PromQL) (*Backend, error) {
 	if cfg.Limits.MaxConcurrent == 0 {
 		cfg.Limits.MaxConcurrent = DefaultMaxConcurrent
 	}
-	if cfg.Write.Protocol == "" {
-		cfg.Write.Protocol = "otlp_http"
+	write := make([]monitoring.Endpoint, len(cfg.Write))
+	for i, e := range cfg.Write {
+		if e.Protocol == "" {
+			e.Protocol = "otlp_http"
+		}
+		write[i] = e
 	}
 	client, err := promapi.NewClient(promapi.Config{
 		BaseURLs: cfg.QueryURLs,
@@ -85,14 +99,16 @@ func New(cfg Config, renderer query.PromQL) (*Backend, error) {
 		return nil, err
 	}
 	return &Backend{
-		write:   cfg.Write,
+		write:   write,
 		client:  client,
 		planner: query.Planner{Renderer: renderer, Limits: cfg.Limits, Runner: client},
 	}, nil
 }
 
-// WriteEndpoint implements monitoring.Backend.
-func (b *Backend) WriteEndpoint() monitoring.Endpoint { return b.write }
+// WriteEndpoints implements monitoring.Backend.
+func (b *Backend) WriteEndpoints() []monitoring.Endpoint {
+	return append([]monitoring.Endpoint(nil), b.write...)
+}
 
 // Query implements monitoring.Backend.
 func (b *Backend) Query(ctx context.Context, q monitoring.QuerySpec) ([]monitoring.Series, error) {
