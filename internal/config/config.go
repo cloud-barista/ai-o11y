@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,7 +49,8 @@ type BackendConfig struct {
 	Timeout        time.Duration
 	ConnectTimeout time.Duration
 	// MaxConcurrent is how many query chunks run at once; MaxIDs is how many
-	// target ids one chunk selects.
+	// target ids one chunk selects. Left empty, each takes the provider's
+	// default; a value given must be positive.
 	MaxConcurrent int
 	MaxIDs        int
 	// PartialResponse lets a query answer from the stores that respond when
@@ -162,6 +164,15 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	maxConcurrent, err := optionalCount(v, "backend.max_concurrent")
+	if err != nil {
+		return nil, err
+	}
+	maxIDs, err := optionalCount(v, "backend.max_ids")
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Server: ServerConfig{Port: v.GetInt("server.port")},
 		Auth:   AuthConfig{Token: v.GetString("auth.token")},
@@ -189,16 +200,13 @@ func Load() (*Config, error) {
 			WriteURLs:       splitURLs(v.GetString("backend.write_url")),
 			Timeout:         timeout,
 			ConnectTimeout:  connectTimeout,
-			MaxConcurrent:   v.GetInt("backend.max_concurrent"),
-			MaxIDs:          v.GetInt("backend.max_ids"),
+			MaxConcurrent:   maxConcurrent,
+			MaxIDs:          maxIDs,
 			PartialResponse: v.GetBool("backend.partial_response"),
 		},
 	}
 	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {
 		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
-	}
-	if cfg.Backend.MaxConcurrent < 0 || cfg.Backend.MaxIDs < 0 {
-		return nil, fmt.Errorf("%s_BACKEND_MAX_CONCURRENT and _MAX_IDS must not be negative", envPrefix)
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)
@@ -224,11 +232,30 @@ func splitURLs(s string) []string {
 	return out
 }
 
+// optionalCount reads a count that may be left empty, which gives 0 for the
+// caller's default. A value given must be a positive integer.
+func optionalCount(v *viper.Viper, key string) (int, error) {
+	env := envName(key)
+	raw := strings.TrimSpace(v.GetString(key))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q; leave it empty for the default", env, raw)
+	}
+	return n, nil
+}
+
+func envName(key string) string {
+	return envPrefix + "_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+}
+
 // optionalDuration reads a duration that may be left empty, which gives 0 for
 // the caller's default. A value given must be positive: there is no setting
 // for "no limit".
 func optionalDuration(v *viper.Viper, key string) (time.Duration, error) {
-	env := envPrefix + "_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+	env := envName(key)
 	raw := strings.TrimSpace(v.GetString(key))
 	if raw == "" {
 		return 0, nil
