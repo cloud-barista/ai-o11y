@@ -1,0 +1,14 @@
+# vmauth-2: prefers vmagent-2 for writes and storage B for queries, and
+# moves to the other when that one is down.
+unauthorized_user:
+  url_map:
+    - src_paths: ["/opentelemetry/.*", "/api/v1/write"]
+      url_prefix:
+        - http://vmagent-2:8429
+        - http://vmagent-1:8429
+      load_balancing_policy: first_available
+    - src_paths: ["/api/v1/.*"]
+      url_prefix:
+        - http://vm-b:8428
+        - http://vm-a:8428
+      load_balancing_policy: first_available

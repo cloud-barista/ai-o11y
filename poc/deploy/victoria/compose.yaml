@@ -1,0 +1,65 @@
+# Two single-node VictoriaMetrics (A, B) holding the same data, two vmagents
+# that each write every sample to both, and two vmauths as entry points: writes
+# go to a vmagent, queries to a storage, each to the first one that is up.
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND=victoria
+#   AIO11Y_BACKEND_QUERY_URL=http://<host>:${VMAUTH_1_PORT},http://<host>:${VMAUTH_2_PORT}
+#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${VMAUTH_1_PORT}/opentelemetry,http://<host>:${VMAUTH_2_PORT}/opentelemetry
+#
+# vmagent keeps the names collectors send (system.cpu.time), the names
+# ai-o11y's metric catalog queries: -opentelemetry.usePrometheusNaming stays
+# off, its default.
+name: aio11y-victoria
+
+x-storage: &storage
+  image: victoriametrics/victoria-metrics:${VM_VERSION}
+  command:
+    - -storageDataPath=/storage
+    - -retentionPeriod=${VM_RETENTION}
+    - -dedup.minScrapeInterval=${VM_DEDUP_INTERVAL}
+
+x-vmagent: &vmagent
+  image: victoriametrics/vmagent:${VM_VERSION}
+  command:
+    - -remoteWrite.url=http://vm-a:8428/api/v1/write
+    - -remoteWrite.url=http://vm-b:8428/api/v1/write
+    - -remoteWrite.tmpDataPath=/buffer
+    - -remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_PER_URL}
+    - -opentelemetry.promoteScopeMetadata=${VMAGENT_OTLP_SCOPE_LABELS}
+
+services:
+  vm-a:
+    <<: *storage
+    volumes: [vm-a:/storage]
+  vm-b:
+    <<: *storage
+    volumes: [vm-b:/storage]
+
+  vmagent-1:
+    <<: *vmagent
+    volumes: [vmagent-1:/buffer]
+    depends_on: [vm-a, vm-b]
+  vmagent-2:
+    <<: *vmagent
+    volumes: [vmagent-2:/buffer]
+    depends_on: [vm-a, vm-b]
+
+  vmauth-1:
+    image: victoriametrics/vmauth:${VM_VERSION}
+    command: [-auth.config=/etc/vmauth/auth.yml]
+    volumes: [./vmauth-1.yml:/etc/vmauth/auth.yml:ro]
+    ports: ["${VMAUTH_1_PORT}:8427"]
+    depends_on: [vmagent-1, vmagent-2]
+  vmauth-2:
+    image: victoriametrics/vmauth:${VM_VERSION}
+    command: [-auth.config=/etc/vmauth/auth.yml]
+    volumes: [./vmauth-2.yml:/etc/vmauth/auth.yml:ro]
+    ports: ["${VMAUTH_2_PORT}:8427"]
+    depends_on: [vmagent-1, vmagent-2]
+
+volumes:
+  vm-a:
+  vm-b:
+  vmagent-1:
+  vmagent-2:

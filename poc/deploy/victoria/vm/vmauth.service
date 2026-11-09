@@ -1,0 +1,13 @@
+[Unit]
+Description=vmauth, the write and query entry point
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=victoria
+ExecStart=/usr/local/bin/vmauth -httpListenAddr=:8427 -auth.config=/etc/aio11y-victoria/vmauth.yml
+Restart=always
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

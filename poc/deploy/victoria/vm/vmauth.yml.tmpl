@@ -1,0 +1,14 @@
+# Writes go to this VM's vmagent, queries to this VM's storage; each moves to
+# the other VM's when this one's is down.
+unauthorized_user:
+  url_map:
+    - src_paths: ["/opentelemetry/.*", "/api/v1/write"]
+      url_prefix:
+        - http://${SELF_ADDR}:8429
+        - http://${PEER_ADDR}:8429
+      load_balancing_policy: first_available
+    - src_paths: ["/api/v1/.*"]
+      url_prefix:
+        - http://${SELF_ADDR}:8428
+        - http://${PEER_ADDR}:8428
+      load_balancing_policy: first_available
