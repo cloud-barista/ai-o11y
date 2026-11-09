@@ -17,7 +17,11 @@ type Config struct {
 	Auth      AuthConfig
 	Tumblebug TumblebugConfig
 	DB        DBConfig
+	// Backend names the metrics backend provider: "thanos" or "victoria".
+	// Only that provider's settings are read.
+	Backend   string
 	Thanos    ThanosConfig
+	Victoria  VictoriaConfig
 	Collector CollectorConfig
 }
 
@@ -31,8 +35,10 @@ type CollectorConfig struct {
 // ThanosConfig is the metrics backend. An empty QueryURL leaves queries and
 // collector configuration unavailable.
 type ThanosConfig struct {
-	// QueryURL is the Thanos Querier HTTP address.
-	QueryURL string
+	// QueryURLs are Thanos Querier HTTP addresses in order of preference,
+	// given as a comma-separated list; a query moves to the next when one
+	// fails.
+	QueryURLs []string
 	// WriteURL is where collectors send samples over OTLP/HTTP: a Prometheus
 	// with a Sidecar or a Thanos Receive, as the deployment is built.
 	WriteURL string
@@ -41,6 +47,29 @@ type ThanosConfig struct {
 	PartialResponse bool
 	Timeout         time.Duration
 }
+
+// VictoriaConfig is the VictoriaMetrics metrics backend. An empty query URL
+// leaves queries and collector configuration unavailable.
+type VictoriaConfig struct {
+	// QueryURLs are addresses serving the Prometheus query API (such as
+	// vmauth or VictoriaMetrics itself) in order of preference, given as a
+	// comma-separated list; a query moves to the next when one fails.
+	QueryURLs []string
+	// WriteURL is where collectors send samples over OTLP/HTTP, such as a
+	// vmauth or vmagent; the collector appends /v1/metrics.
+	WriteURL string
+	Timeout  time.Duration
+	// MaxConcurrent is how many query chunks run at once; MaxIDs is how many
+	// target ids one chunk selects. Zero takes the provider's default.
+	MaxConcurrent int
+	MaxIDs        int
+}
+
+// Metrics backend providers AIO11Y_BACKEND selects.
+const (
+	BackendThanos   = "thanos"
+	BackendVictoria = "victoria"
+)
 
 // DBConfig is the MariaDB that keeps the target table. An empty Host leaves
 // the database out: the service starts, but nothing that needs the target
@@ -93,8 +122,10 @@ func Load() (*Config, error) {
 	v.SetDefault("db.connect_timeout", 5*time.Second)
 	v.SetDefault("db.read_timeout", 30*time.Second)
 	v.SetDefault("db.write_timeout", 30*time.Second)
+	v.SetDefault("backend", BackendThanos)
 	v.SetDefault("thanos.partial_response", false)
 	v.SetDefault("thanos.timeout", 2*time.Minute)
+	v.SetDefault("victoria.timeout", 30*time.Second)
 
 	// AutomaticEnv only resolves keys that viper already knows about.
 	for _, key := range []string{
@@ -113,10 +144,16 @@ func Load() (*Config, error) {
 		"db.connect_timeout",
 		"db.read_timeout",
 		"db.write_timeout",
+		"backend",
 		"thanos.query_url",
 		"thanos.write_url",
 		"thanos.partial_response",
 		"thanos.timeout",
+		"victoria.query_url",
+		"victoria.write_url",
+		"victoria.timeout",
+		"victoria.max_concurrent",
+		"victoria.max_ids",
 		"collector.telemetry_port",
 	} {
 		if err := v.BindEnv(key); err != nil {
@@ -145,12 +182,26 @@ func Load() (*Config, error) {
 			WriteTimeout:   v.GetDuration("db.write_timeout"),
 		},
 		Collector: CollectorConfig{TelemetryPort: v.GetInt("collector.telemetry_port")},
+		Backend:   strings.ToLower(strings.TrimSpace(v.GetString("backend"))),
 		Thanos: ThanosConfig{
-			QueryURL:        strings.TrimRight(v.GetString("thanos.query_url"), "/"),
+			QueryURLs:       splitURLs(v.GetString("thanos.query_url")),
 			WriteURL:        v.GetString("thanos.write_url"),
 			PartialResponse: v.GetBool("thanos.partial_response"),
 			Timeout:         v.GetDuration("thanos.timeout"),
 		},
+		Victoria: VictoriaConfig{
+			QueryURLs:     splitURLs(v.GetString("victoria.query_url")),
+			WriteURL:      v.GetString("victoria.write_url"),
+			Timeout:       v.GetDuration("victoria.timeout"),
+			MaxConcurrent: v.GetInt("victoria.max_concurrent"),
+			MaxIDs:        v.GetInt("victoria.max_ids"),
+		},
+	}
+	if cfg.Backend != BackendThanos && cfg.Backend != BackendVictoria {
+		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend)
+	}
+	if cfg.Victoria.MaxConcurrent < 0 || cfg.Victoria.MaxIDs < 0 {
+		return nil, fmt.Errorf("%s_VICTORIA_MAX_CONCURRENT and %s_VICTORIA_MAX_IDS must not be negative", envPrefix, envPrefix)
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)
@@ -162,4 +213,16 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("%s_DB_PORT must be between 1 and 65535, got %d", envPrefix, cfg.DB.Port)
 	}
 	return cfg, nil
+}
+
+// splitURLs reads a comma-separated list of addresses, dropping empty entries
+// and trailing slashes.
+func splitURLs(s string) []string {
+	var out []string
+	for _, u := range strings.Split(s, ",") {
+		if u = strings.TrimRight(strings.TrimSpace(u), "/"); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
 }

@@ -2,11 +2,11 @@
 
 Monitoring control plane for the AI-MCMP platform. It keeps the monitoring
 targets, renders the configuration of the collector that runs on each target,
-and answers metric queries over a Prometheus-family backend (Thanos). Samples go
+and answers metric queries over a Prometheus-family backend (Thanos or VictoriaMetrics). Samples go
 from the collectors to the backend, never through this service.
 
 ```
-CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos Querier
+CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / VictoriaMetrics
                               │                        ▲
                      collector config                  │ OTLP/HTTP
                               ▼                        │
@@ -24,7 +24,7 @@ CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos Que
 | `internal/monitoring/source/tumblebug` | Management platform adapter for CB-Tumblebug. |
 | `internal/monitoring/catalog` | Metric catalog: the fields queries name, see [docs/metric-catalog.md](docs/metric-catalog.md). |
 | `internal/monitoring/query` | Renders queries to PromQL and runs them in chunks of targets. |
-| `internal/monitoring/backend` | Prometheus query API client and the Thanos backend. |
+| `internal/monitoring/backend` | Prometheus query API client and the Thanos and VictoriaMetrics backends, selected by `AIO11Y_BACKEND`. |
 | `internal/monitoring/collector` | Renders the collector configuration of a target. |
 | `otelcol/` | The collector, built with the OpenTelemetry Collector Builder, and its own components (`otelcol/receiver/nvidiagpureceiver`). Not part of the service's Go module. |
 
@@ -42,7 +42,7 @@ make -C otelcol test  # tests of the collector's own components
 ```
 
 The service starts with no configuration; each part it is not given (database,
-CB-Tumblebug, Thanos) leaves the routes that need it answering 503.
+CB-Tumblebug, metrics backend) leaves the routes that need it answering 503.
 Configuration is environment variables, listed with their defaults in
 [conf/template-setup.env](conf/template-setup.env).
 
@@ -78,6 +78,7 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   attributes given at registration included.
 - **Backend**: verified against a local Prometheus 3.16 with a Thanos 0.42
   Sidecar and Querier only. `AIO11Y_THANOS_PARTIAL_RESPONSE` is off for now.
+  The VictoriaMetrics backend is tested against a fake query API only.
 - **Metric catalog**: see the known limits in
   [docs/metric-catalog.md](docs/metric-catalog.md).
 

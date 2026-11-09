@@ -35,10 +35,10 @@ func fakeAPI(t *testing.T, status int, body string) (*Client, *[]request) {
 	}))
 	t.Cleanup(srv.Close)
 	c, err := NewClient(Config{
-		BaseURL: srv.URL + "/",
-		Timeout: 30 * time.Second,
-		Headers: map[string]string{"X-Test": "yes"},
-		Params:  url.Values{"dedup": {"true"}},
+		BaseURLs: []string{srv.URL + "/"},
+		Timeout:  30 * time.Second,
+		Headers:  map[string]string{"X-Test": "yes"},
+		Params:   url.Values{"dedup": {"true"}},
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -142,7 +142,7 @@ func TestRetryOnRateLimit(t *testing.T) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
 	}))
 	defer srv.Close()
-	c, _ := NewClient(Config{BaseURL: srv.URL, Timeout: time.Second})
+	c, _ := NewClient(Config{BaseURLs: []string{srv.URL}, Timeout: time.Second})
 	c.retry = retry.Policy{MaxRetries: retry.DefaultMaxRetries, Base: time.Millisecond, MaxWait: time.Millisecond}
 	if _, err := c.Instant(context.Background(), "up", time.Time{}); err != nil {
 		t.Fatalf("Instant after %d 429s: %v", retry.DefaultMaxRetries, err)
@@ -180,5 +180,78 @@ func TestTimeoutInSeconds(t *testing.T) {
 	}
 	if got := (*seen)[0].form.Get("timeout"); got != "1.5" {
 		t.Errorf("timeout = %q, want 1.5", got)
+	}
+}
+
+// TestFailoverToNextAddress: an address that cannot be reached or answers a
+// 5xx hands the request to the next one; the first address is tried first
+// again on the next request.
+func TestFailoverToNextAddress(t *testing.T) {
+	ok := `{"status":"success","data":{"resultType":"vector","result":[]}}`
+	var hits []string
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, "broken")
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer broken.Close()
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, "good")
+		_, _ = w.Write([]byte(ok))
+	}))
+	defer good.Close()
+	down := httptest.NewServer(http.NotFoundHandler())
+	downURL := down.URL
+	down.Close()
+
+	c, err := NewClient(Config{BaseURLs: []string{downURL, broken.URL, good.URL}, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := c.Instant(context.Background(), "up", time.Time{}); err != nil {
+			t.Fatalf("Instant: %v", err)
+		}
+	}
+	if want := []string{"broken", "good", "broken", "good"}; !reflect.DeepEqual(hits, want) {
+		t.Errorf("hits = %v, want %v", hits, want)
+	}
+}
+
+// TestNoFailoverOnClientError: a 4xx is the query's own fault, the same at
+// every address, so the next address is not tried.
+func TestNoFailoverOnClientError(t *testing.T) {
+	secondHit := false
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"status":"error","errorType":"bad_data","error":"parse error"}`))
+	}))
+	defer bad.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondHit = true
+	}))
+	defer second.Close()
+
+	c, _ := NewClient(Config{BaseURLs: []string{bad.URL, second.URL}, Timeout: time.Second})
+	_, err := c.Instant(context.Background(), "up{", time.Time{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest {
+		t.Errorf("err = %v, want the 400", err)
+	}
+	if secondHit {
+		t.Error("a 400 was sent on to the next address")
+	}
+}
+
+// TestAllAddressesFail returns the last address's error.
+func TestAllAddressesFail(t *testing.T) {
+	down := httptest.NewServer(http.NotFoundHandler())
+	downURL := down.URL
+	down.Close()
+	c, _ := NewClient(Config{BaseURLs: []string{downURL, downURL}, Timeout: time.Second})
+	if _, err := c.Instant(context.Background(), "up", time.Time{}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v, want ErrUnavailable", err)
+	}
+	if _, err := NewClient(Config{BaseURLs: []string{"http://a", " "}, Timeout: time.Second}); err == nil {
+		t.Error("NewClient with an empty address succeeded")
 	}
 }

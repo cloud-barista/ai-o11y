@@ -17,6 +17,7 @@ import (
 	"github.com/cloud-barista/ai-o11y/internal/config"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/thanos"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/victoria"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/collector"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/mapping"
@@ -146,19 +147,42 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 		}
 	}
 
-	if cfg.Thanos.QueryURL == "" {
-		log.Warn().Msg("AIO11Y_THANOS_QUERY_URL is not set: queries and collector configuration are unavailable")
-	} else {
-		b, err := thanos.New(thanos.Config{
-			QueryURL:        cfg.Thanos.QueryURL,
-			Write:           monitoring.Endpoint{URL: cfg.Thanos.WriteURL},
-			PartialResponse: cfg.Thanos.PartialResponse,
-			Timeout:         cfg.Thanos.Timeout,
-		}, query.PromQL{Catalog: cat})
-		if err != nil {
-			return rest.Deps{}, err
-		}
+	b, err := newBackend(cfg, query.PromQL{Catalog: cat})
+	if err != nil {
+		return rest.Deps{}, err
+	}
+	if b != nil {
 		deps.Backend = b
 	}
 	return deps, nil
+}
+
+// newBackend builds the metrics backend AIO11Y_BACKEND selects. It returns nil
+// when that backend has no query URL, leaving queries and collector
+// configuration unavailable.
+func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, error) {
+	switch cfg.Backend {
+	case victoria.ProviderName:
+		if len(cfg.Victoria.QueryURLs) == 0 {
+			log.Warn().Msg("AIO11Y_VICTORIA_QUERY_URL is not set: queries and collector configuration are unavailable")
+			return nil, nil
+		}
+		return victoria.New(victoria.Config{
+			QueryURLs: cfg.Victoria.QueryURLs,
+			Write:     monitoring.Endpoint{URL: cfg.Victoria.WriteURL},
+			Timeout:   cfg.Victoria.Timeout,
+			Limits:    query.ChunkLimits{MaxIDs: cfg.Victoria.MaxIDs, MaxConcurrent: cfg.Victoria.MaxConcurrent},
+		}, renderer)
+	default:
+		if len(cfg.Thanos.QueryURLs) == 0 {
+			log.Warn().Msg("AIO11Y_THANOS_QUERY_URL is not set: queries and collector configuration are unavailable")
+			return nil, nil
+		}
+		return thanos.New(thanos.Config{
+			QueryURLs:       cfg.Thanos.QueryURLs,
+			Write:           monitoring.Endpoint{URL: cfg.Thanos.WriteURL},
+			PartialResponse: cfg.Thanos.PartialResponse,
+			Timeout:         cfg.Thanos.Timeout,
+		}, renderer)
+	}
 }

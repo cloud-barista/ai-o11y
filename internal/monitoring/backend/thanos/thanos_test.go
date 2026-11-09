@@ -36,7 +36,7 @@ func TestQuerySendsThanosParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	b, err := New(Config{QueryURL: srv.URL, Limits: query.ChunkLimits{MaxIDs: 2}}, renderer(t))
+	b, err := New(Config{QueryURLs: []string{srv.URL}, Limits: query.ChunkLimits{MaxIDs: 2}}, renderer(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestQuerySendsThanosParams(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	b, err := New(Config{QueryURL: "http://thanos-query:10902", Write: monitoring.Endpoint{URL: "http://receive:19291/otlp"}}, renderer(t))
+	b, err := New(Config{QueryURLs: []string{"http://thanos-query:10902"}, Write: monitoring.Endpoint{URL: "http://receive:19291/otlp"}}, renderer(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -1,6 +1,7 @@
 // Package promapi is a client for the Prometheus HTTP query API, which
-// Prometheus, the Thanos Querier and Mimir all serve. Backend providers build
-// on it and add what is their own, such as Thanos' dedup parameter.
+// Prometheus, the Thanos Querier, Mimir and VictoriaMetrics all serve. Backend
+// providers build on it and add what is their own, such as Thanos' dedup
+// parameter.
 package promapi
 
 import (
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -27,13 +29,20 @@ const (
 	// httpSlack is how much longer the HTTP client waits than the query
 	// timeout it sends, so the backend's own timeout error arrives first.
 	httpSlack = 5 * time.Second
+	// dialTimeout bounds connecting to one address, so an address that does
+	// not answer at all hands over to the next one quickly instead of using up
+	// the whole query timeout.
+	dialTimeout = 5 * time.Second
 )
 
 // Config is where the query API is and how every request is sent.
 type Config struct {
-	// BaseURL is the address the /api/v1 paths hang from, such as
-	// "http://thanos-query:10902".
-	BaseURL string
+	// BaseURLs are the addresses the /api/v1 paths hang from, such as
+	// "http://thanos-query:10902", in order of preference. Every request
+	// starts at the first; it moves to the next when an address cannot be
+	// reached or answers with a 5xx. Each address serves the same data, such
+	// as two queriers or two query proxies in front of replicated storage.
+	BaseURLs []string
 	// Timeout is sent as the timeout parameter of every query, so time spent
 	// waiting for a query slot counts against it too.
 	Timeout time.Duration
@@ -48,23 +57,33 @@ type Config struct {
 // proxies allow.
 type Client struct {
 	cfg        Config
-	baseURL    string
+	baseURLs   []string
 	httpClient *http.Client
 	retry      retry.Policy
 }
 
 // NewClient builds a Client from cfg.
 func NewClient(cfg Config) (*Client, error) {
-	if cfg.BaseURL == "" {
+	if len(cfg.BaseURLs) == 0 {
 		return nil, errors.New("query API base URL is empty")
+	}
+	baseURLs := make([]string, 0, len(cfg.BaseURLs))
+	for _, u := range cfg.BaseURLs {
+		u = strings.TrimRight(strings.TrimSpace(u), "/")
+		if u == "" {
+			return nil, errors.New("query API base URL is empty")
+		}
+		baseURLs = append(baseURLs, u)
 	}
 	if cfg.Timeout <= 0 {
 		return nil, errors.New("query timeout must be positive")
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext
 	return &Client{
 		cfg:        cfg,
-		baseURL:    strings.TrimRight(cfg.BaseURL, "/"),
-		httpClient: &http.Client{Timeout: cfg.Timeout + httpSlack},
+		baseURLs:   baseURLs,
+		httpClient: &http.Client{Timeout: cfg.Timeout + httpSlack, Transport: transport},
 		retry:      retry.Default(),
 	}, nil
 }
@@ -120,7 +139,7 @@ func (c *Client) post(ctx context.Context, path string, form url.Values, out any
 	}
 	body := form.Encode()
 	return c.retry.Do(ctx, func() (bool, time.Duration, error) {
-		after, err := c.postOnce(ctx, path, body, out)
+		after, err := c.postAny(ctx, path, body, out)
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
 			log.Debug().Str("path", path).Msg("Query API rate-limited the request")
@@ -130,8 +149,41 @@ func (c *Client) post(ctx context.Context, path string, form url.Values, out any
 	})
 }
 
-func (c *Client) postOnce(ctx context.Context, path, body string, out any) (time.Duration, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, strings.NewReader(body))
+// postAny sends the request to each address in turn until one answers with
+// something other than a failure to connect or a 5xx. A 4xx is the query's
+// own fault and would be the same at every address, so it is returned at
+// once, as is a 429, which post retries from the first address.
+func (c *Client) postAny(ctx context.Context, path, body string, out any) (time.Duration, error) {
+	var (
+		after time.Duration
+		err   error
+	)
+	for i, base := range c.baseURLs {
+		after, err = c.postOnce(ctx, base, path, body, out)
+		if !failsOver(err) || ctx.Err() != nil {
+			return after, err
+		}
+		if i+1 < len(c.baseURLs) {
+			log.Warn().Err(err).Str("path", path).Str("next", c.baseURLs[i+1]).Msg("Query API address failed, trying the next one")
+		}
+	}
+	return after, err
+}
+
+// failsOver tells whether err is worth sending the request to another address.
+func failsOver(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrUnavailable) {
+		return true
+	}
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode >= 500
+}
+
+func (c *Client) postOnce(ctx context.Context, base, path, body string, out any) (time.Duration, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, strings.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("failed to build request: %w", err)
 	}

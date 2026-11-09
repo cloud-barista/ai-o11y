@@ -31,9 +31,10 @@ const (
 
 // Config is how this deployment's Thanos is reached.
 type Config struct {
-	// QueryURL is the Thanos Querier HTTP address, such as
-	// "http://thanos-query:10902".
-	QueryURL string
+	// QueryURLs are Thanos Querier HTTP addresses, such as
+	// "http://thanos-query:10902", in order of preference; a query moves to
+	// the next when one cannot be reached or answers with a 5xx.
+	QueryURLs []string
 	// Write is where collectors send samples (OTLP over HTTP). Which component
 	// takes them depends on the deployment: Prometheus with a Sidecar, or a
 	// Thanos Receive.
@@ -60,7 +61,7 @@ var _ monitoring.Backend = (*Backend)(nil)
 
 // New builds the backend; renderer turns a QuerySpec into PromQL.
 func New(cfg Config, renderer query.PromQL) (*Backend, error) {
-	if cfg.QueryURL == "" {
+	if len(cfg.QueryURLs) == 0 {
 		return nil, errors.New("thanos query URL is empty")
 	}
 	if cfg.Timeout == 0 {
@@ -76,9 +77,9 @@ func New(cfg Config, renderer query.PromQL) (*Backend, error) {
 		cfg.Write.Protocol = "otlp_http"
 	}
 	client, err := promapi.NewClient(promapi.Config{
-		BaseURL: cfg.QueryURL,
-		Timeout: cfg.Timeout,
-		Headers: cfg.Headers,
+		BaseURLs: cfg.QueryURLs,
+		Timeout:  cfg.Timeout,
+		Headers:  cfg.Headers,
 		Params: url.Values{
 			// The Querier deduplicates by default; it is sent so a querier
 			// started otherwise still merges replicas.
