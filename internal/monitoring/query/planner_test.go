@@ -81,9 +81,9 @@ func testData() string {
 	b.WriteString("load 30s\n")
 	for i, id := range fleet {
 		idle := 30 - 3*i // seconds idle per 30s step out of 30*2 CPUs
-		fmt.Fprintf(&b, "  system_cpu_time_seconds_total{entity_id=%q,state=\"idle\",cpu=\"0\"} 0+%dx240\n", id, idle)
-		fmt.Fprintf(&b, "  system_cpu_time_seconds_total{entity_id=%q,state=\"user\",cpu=\"0\"} 0+%dx240\n", id, 60-idle)
-		fmt.Fprintf(&b, "  system_memory_utilization_ratio{entity_id=%q,state=\"used\"} %.3f+0.001x240\n", id, 0.1+0.07*float64(i))
+		fmt.Fprintf(&b, "  {__name__=\"system.cpu.time\",entity_id=%q,state=\"idle\",cpu=\"0\"} 0+%dx240\n", id, idle)
+		fmt.Fprintf(&b, "  {__name__=\"system.cpu.time\",entity_id=%q,state=\"user\",cpu=\"0\"} 0+%dx240\n", id, 60-idle)
+		fmt.Fprintf(&b, "  {__name__=\"system.memory.utilization\",entity_id=%q,state=\"used\"} %.3f+0.001x240\n", id, 0.1+0.07*float64(i))
 		for g := range 2 {
 			fmt.Fprintf(&b, "  nvidia_smi_utilization_gpu_ratio{entity_id=%q,uuid=\"gpu%d\"} %.3f+0.0005x240\n", id, g, 0.05+0.11*float64(i)+0.03*float64(g))
 		}

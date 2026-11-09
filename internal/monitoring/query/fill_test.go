@@ -15,9 +15,9 @@ import (
 // and VM c reports nothing at all.
 func TestFillZero(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
-  system_cpu_time_seconds_total{entity_id="a",state="idle",cpu="0"} 0+30x20
-  system_cpu_time_seconds_total{entity_id="b",state="idle",cpu="0"} 0+30x20
-  system_processes_count{entity_id="a",status="zombies"} 2x20
+  {__name__="system.cpu.time",entity_id="a",state="idle",cpu="0"} 0+30x20
+  {__name__="system.cpu.time",entity_id="b",state="idle",cpu="0"} 0+30x20
+  {__name__="system.processes.count",entity_id="a",status="zombies"} 2x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	at := time.Unix(0, 0).UTC().Add(10 * time.Minute)

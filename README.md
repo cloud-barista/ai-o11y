@@ -76,9 +76,15 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   platform needs it reworked.
 - **Sync**: a sync replaces a target's description with what CB-Tumblebug lists,
   attributes given at registration included.
-- **Backend**: verified against a local Prometheus 3.16 with a Thanos 0.42
-  Sidecar and Querier only. `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
-  The VictoriaMetrics backend is tested against a fake query API only.
+- **Backend**: verified locally against Prometheus 3.16 with a Thanos 0.42
+  Sidecar and Querier, and against two single-node VictoriaMetrics 1.155 behind
+  vmauth ([poc/deploy](poc/deploy)). The backend must store the names
+  collectors send (`system.cpu.time`): Prometheus with
+  `otlp.translation_strategy: NoTranslation`, VictoriaMetrics with its default.
+  A Thanos Receive rewrites the names and is not supported.
+  `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
+- **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s the collector
+  keeps no queue, so samples are dropped while every address fails.
 - **Metric catalog**: see the known limits in
   [docs/metric-catalog.md](docs/metric-catalog.md).
 

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/promql/parser"
+
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
 )
@@ -30,8 +32,8 @@ func targets(ids ...string) monitoring.TargetSet {
 // cpuUtil is the catalog expression of system.cpu.utilization with the
 // placeholders filled.
 func cpuUtil(sel, rng string) string {
-	return `1 - (sum by (entity_id) (rate(system_cpu_time_seconds_total{state="idle",` + sel + `}[` + rng + `]))` +
-		` / sum by (entity_id) (rate(system_cpu_time_seconds_total{` + sel + `}[` + rng + `])))`
+	return `1 - (sum by (entity_id) (rate({"system.cpu.time", state="idle", ` + sel + `}[` + rng + `]))` +
+		` / sum by (entity_id) (rate({"system.cpu.time", ` + sel + `}[` + rng + `])))`
 }
 
 const abc = `entity_id=~"a|b|c"`
@@ -68,7 +70,7 @@ func TestRenderCurrentScreens(t *testing.T) {
 				Metric: "system.filesystem.usage", Targets: targets("a", "b"), Window: hour,
 				Within: &monitoring.Reduce{Label: "mountpoint", Fn: monitoring.AggSum},
 			},
-			`sum by (entity_id) (avg_over_time((sum by (entity_id, mountpoint) (system_filesystem_usage_bytes{state="used",entity_id=~"a|b"}))[1h:30s]))`,
+			`sum by (entity_id) (avg_over_time((sum by (entity_id, mountpoint) ({"system.filesystem.usage", state="used", entity_id=~"a|b"}))[1h:30s]))`,
 		},
 		// Q5: top VMs by the mean over the duration (VM overview top 5).
 		"Q5 top-k": {
@@ -165,11 +167,11 @@ func TestRenderWindow(t *testing.T) {
 		},
 		"gauge current value": {
 			"system.memory.utilization", monitoring.Agg{},
-			`sum by (entity_id) (system_memory_utilization_ratio{state="used",entity_id="a"})`,
+			`sum by (entity_id) ({"system.memory.utilization", state="used", entity_id="a"})`,
 		},
 		"gauge last": {
 			"system.memory.utilization", monitoring.Agg{Fn: monitoring.AggLast, Range: 10 * time.Minute},
-			`last_over_time((sum by (entity_id) (system_memory_utilization_ratio{state="used",entity_id="a"}))[10m:30s])`,
+			`last_over_time((sum by (entity_id) ({"system.memory.utilization", state="used", entity_id="a"}))[10m:30s])`,
 		},
 	} {
 		got, err := r.Render(monitoring.QuerySpec{Metric: tc.metric, Targets: targets("a"), Window: tc.window})
@@ -257,7 +259,7 @@ func TestRenderRejects(t *testing.T) {
 		"GPU row not built":    {Metric: "gpu.utilization", Targets: targets("a")},
 		"graph top-k no range": {Metric: "system.memory.usage", Targets: targets("a"), Step: time.Minute, TopK: &monitoring.TopK{N: 1}},
 		"group by without fn":  {Metric: "system.memory.usage", Targets: targets("a"), GroupBy: []string{"entity_id"}},
-		"bad group by label":   {Metric: "system.memory.usage", Targets: targets("a"), Across: monitoring.AggSum, GroupBy: []string{"cloud.region"}},
+		"bad group by label":   {Metric: "system.memory.usage", Targets: targets("a"), Across: monitoring.AggSum, GroupBy: []string{"__name__"}},
 		"top-k of zero":        {Metric: "system.memory.usage", Targets: targets("a"), TopK: &monitoring.TopK{}},
 	} {
 		if got, err := r.Render(q); err == nil {
@@ -302,5 +304,22 @@ func TestRenderEveryRow(t *testing.T) {
 				t.Errorf("%s %+v: %v", row.ID(), q, err)
 			}
 		}
+	}
+}
+
+// TestRenderQuotesDottedGroupLabels: an attribute keeps its dotted name as its
+// series label, so grouping by it quotes it.
+func TestRenderQuotesDottedGroupLabels(t *testing.T) {
+	r := renderer(t)
+	got, err := r.Render(monitoring.QuerySpec{Metric: "system.cpu.utilization", Targets: targets("a", "b"),
+		SplitBy: []string{"cpu.mode"}, Across: monitoring.AggAvg, GroupBy: []string{"cpu.mode"}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.HasPrefix(got, `avg by ("cpu.mode") (`) {
+		t.Errorf("got %s, want the group label quoted", got)
+	}
+	if _, err := parser.NewParser(parser.Options{}).ParseExpr(strings.NewReplacer("$range", "1m").Replace(got)); err != nil {
+		t.Errorf("Prometheus parser refused %s: %v", got, err)
 	}
 }

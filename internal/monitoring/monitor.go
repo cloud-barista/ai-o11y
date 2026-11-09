@@ -8,7 +8,7 @@ package monitoring
 import (
 	"context"
 	"fmt"
-	"strings"
+	"strconv"
 	"time"
 )
 
@@ -169,7 +169,7 @@ type MetricRow struct {
 	Exprs map[string]string
 	// Attribute, when set, splits the field, such as cpu.mode for
 	// system.cpu.utilization. SplitExprs computes it with one series per
-	// attribute value, in the label AttrLabel(Attribute.Name).
+	// attribute value, in the label named after the attribute itself.
 	Attribute  *Attribute
 	SplitExprs map[string]string
 	// Dimension is the label that splits the field within one target, such as
@@ -212,9 +212,22 @@ type Attribute struct {
 	Values []string
 }
 
-// AttrLabel is the series label an attribute travels in: its name with dots
-// made underscores, the way OTLP names reach Prometheus.
-func AttrLabel(name string) string { return strings.ReplaceAll(name, ".", "_") }
+// PromQLName writes a metric or label name into PromQL: as it is when it is a
+// classic name ([a-zA-Z_:][a-zA-Z0-9_:]*), double-quoted otherwise, as in
+// {"system.cpu.time"} or by ("cpu.mode"), the UTF-8 syntax Prometheus 3 and
+// MetricsQL read. Series keep the names collectors send, dots included.
+func PromQLName(name string) string {
+	for i, r := range name {
+		classic := r == '_' || r == ':' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9')
+		if !classic {
+			return strconv.Quote(name)
+		}
+	}
+	if name == "" {
+		return `""`
+	}
+	return name
+}
 
 // MetricCatalog resolves catalog fields by MetricRow.ID.
 type MetricCatalog interface {

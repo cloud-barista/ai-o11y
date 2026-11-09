@@ -330,7 +330,7 @@ func TestQuery(t *testing.T) {
 		backend.got.Targets[0].EntityID != "k2" {
 		t.Errorf("query by id = %d", code)
 	}
-	backend.series = []monitoring.Series{{Labels: map[string]string{"entity_id": "k1", "cpu_mode": "user"},
+	backend.series = []monitoring.Series{{Labels: map[string]string{"entity_id": "k1", "cpu.mode": "user"},
 		Points: []monitoring.Point{{T: at, V: 0.25}}}}
 	code, body = call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"],"splitBy":["cpu.mode"],"where":{"cpu.mode":"user"}}`)
 	if code != http.StatusOK || !strings.Contains(body, `"cpu.mode":"user"`) || strings.Contains(body, "cpu_mode") {

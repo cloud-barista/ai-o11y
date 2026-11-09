@@ -6,9 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/prometheus/prometheus/promql/parser"
 	"strings"
 	"time"
+
+	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql/parser"
 
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
@@ -28,9 +31,9 @@ const HostmetricsReceiver = "host_metrics"
 
 // scraperPrefixes maps a hostmetrics metric name prefix to the scraper that
 // emits it. Longer prefixes come first so system_cpu_load_average resolves to
-// load, not cpu. Prefixes use the Prometheus translation with underscores,
-// because the dotted names keep underscores of their own (load_average), so
-// only dots-to-underscores is lossless; normalize() maps dotted names over.
+// load, not cpu. Prefixes are written with underscores because the dotted
+// names keep underscores of their own (load_average), so only
+// dots-to-underscores is lossless; normalize() maps dotted names over.
 var scraperPrefixes = []struct{ prefix, scraper string }{
 	{"system_cpu_load_average", "load"},
 	{"system_cpu_", "cpu"},
@@ -59,8 +62,19 @@ func metricNames(expr string) ([]string, error) {
 	}
 	var names []string
 	parser.Inspect(node, func(n parser.Node, _ []parser.Node) error {
-		if vs, ok := n.(*parser.VectorSelector); ok && vs.Name != "" {
+		vs, ok := n.(*parser.VectorSelector)
+		if !ok {
+			return nil
+		}
+		if vs.Name != "" {
 			names = append(names, vs.Name)
+			return nil
+		}
+		// A quoted name, {"system.cpu.time"}, is a __name__ matcher.
+		for _, m := range vs.LabelMatchers {
+			if m.Name == model.MetricNameLabel && m.Type == labels.MatchEqual {
+				names = append(names, m.Value)
+			}
 		}
 		return nil
 	})
@@ -119,6 +133,9 @@ func (h Hostmetrics) Render(t monitoring.Target, c monitoring.MetricCatalog) (mo
 			found, err := metricNames(e)
 			if err != nil {
 				return monitoring.ConfigFragment{}, fmt.Errorf("catalog row %s: %w", row.ID(), err)
+			}
+			if len(found) == 0 {
+				return monitoring.ConfigFragment{}, fmt.Errorf("catalog row %s: expression selects no series by name", row.ID())
 			}
 			names = append(names, found...)
 		}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -184,16 +185,14 @@ func ToSeriesLabels(row monitoring.MetricRow, q monitoring.QuerySpec) monitoring
 	return q
 }
 
-// ToAttributeNames renames the series labels of row's dimension and attribute
-// in labels to their OpenTelemetry attribute names.
+// ToAttributeNames renames the series label of row's dimension in labels to
+// its OpenTelemetry attribute name; an attribute's label already is its name.
 func ToAttributeNames(row monitoring.MetricRow, labels map[string]string) map[string]string {
 	out := make(map[string]string, len(labels))
 	for k, v := range labels {
 		switch {
 		case row.Dimension != "" && k == row.Dimension:
 			k = row.DimensionName
-		case row.Attribute != nil && k == monitoring.AttrLabel(row.Attribute.Name):
-			k = row.Attribute.Name
 		}
 		out[k] = v
 	}
@@ -201,13 +200,11 @@ func ToAttributeNames(row monitoring.MetricRow, labels map[string]string) map[st
 }
 
 // SeriesLabel is the series label the attribute name stands for in row's
-// expressions: the row's dimension or attribute label, or name itself.
+// expressions: the row's dimension label, or name itself.
 func SeriesLabel(row monitoring.MetricRow, name string) string {
 	switch {
 	case row.DimensionName != "" && name == row.DimensionName:
 		return row.Dimension
-	case row.Attribute != nil && name == row.Attribute.Name:
-		return monitoring.AttrLabel(name)
 	default:
 		return name
 	}
@@ -252,11 +249,10 @@ func template(row monitoring.MetricRow, collector, expr string, q monitoring.Que
 	if !slices.Contains(row.Attribute.Values, value) {
 		return "", fmt.Errorf("%w: %s is not a value of %s", ErrInvalidQuery, value, name)
 	}
-	label := monitoring.AttrLabel(name)
-	keep := fmt.Sprintf(`label_replace(vector(1), %q, %q, "", "")`, label, value)
-	out := fmt.Sprintf("(%s) and on (%s) %s", split, label, keep)
+	keep := fmt.Sprintf(`label_replace(vector(1), %q, %q, "", "")`, name, value)
+	out := fmt.Sprintf("(%s) and on (%s) %s", split, monitoring.PromQLName(name), keep)
 	if fill != "" {
-		out = fmt.Sprintf(`(%s) or label_replace(%s, %q, %q, "", "")`, out, fill, label, value)
+		out = fmt.Sprintf(`(%s) or label_replace(%s, %q, %q, "", "")`, out, fill, name, value)
 	}
 	return out, nil
 }
@@ -341,7 +337,7 @@ func within(row monitoring.MetricRow, expr string, w monitoring.Reduce) (string,
 	if !slices.Contains(keep, monitoring.LabelEntityID) {
 		return "", fmt.Errorf("metric %q: expression does not group by %s", row.Name, monitoring.LabelEntityID)
 	}
-	return fmt.Sprintf("%s by (%s) (%s)", w.Fn, strings.Join(keep, ", "), expr), nil
+	return fmt.Sprintf("%s by (%s) (%s)", w.Fn, labelList(keep), expr), nil
 }
 
 // across combines the targets.
@@ -359,11 +355,29 @@ func across(expr string, fn monitoring.AggFn, groupBy []string) (string, error) 
 		return fmt.Sprintf("%s(%s)", fn, expr), nil
 	}
 	for _, l := range groupBy {
-		if err := monitoring.ValidateLabelName(l); err != nil {
+		if err := checkGroupLabel(l); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("%s by (%s) (%s)", fn, strings.Join(groupBy, ", "), expr), nil
+	return fmt.Sprintf("%s by (%s) (%s)", fn, labelList(groupBy), expr), nil
+}
+
+// checkGroupLabel accepts a label a query may group by: any series label,
+// dots included, but not one reserved by Prometheus ("__").
+func checkGroupLabel(l string) error {
+	if l == "" || strings.HasPrefix(l, "__") || !utf8.ValidString(l) {
+		return fmt.Errorf("%w: cannot group by label %q", ErrInvalidQuery, l)
+	}
+	return nil
+}
+
+// labelList writes labels for a grouping clause, quoting those with dots.
+func labelList(labels []string) string {
+	out := make([]string, len(labels))
+	for i, l := range labels {
+		out[i] = monitoring.PromQLName(l)
+	}
+	return strings.Join(out, ", ")
 }
 
 func topK(expr string, k monitoring.TopK) (string, error) {
@@ -377,10 +391,10 @@ func topK(expr string, k monitoring.TopK) (string, error) {
 	if k.PerLabel == "" {
 		return fmt.Sprintf("%s(%d, %s)", op, k.N, expr), nil
 	}
-	if err := monitoring.ValidateLabelName(k.PerLabel); err != nil {
+	if err := checkGroupLabel(k.PerLabel); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s by (%s) (%d, %s)", op, k.PerLabel, k.N, expr), nil
+	return fmt.Sprintf("%s by (%s) (%d, %s)", op, monitoring.PromQLName(k.PerLabel), k.N, expr), nil
 }
 
 // selector matches the targets by entity id. The ids are sorted and
