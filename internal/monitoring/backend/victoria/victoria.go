@@ -43,6 +43,9 @@ type Config struct {
 	// queries; -opentelemetry.usePrometheusNaming must stay off.
 	Write   []monitoring.Endpoint
 	Timeout time.Duration
+	// ConnectTimeout bounds connecting to one query address; zero takes
+	// promapi.DefaultConnectTimeout.
+	ConnectTimeout time.Duration
 	// PartialResponse has no counterpart in single-node VictoriaMetrics, which
 	// answers from its one store; it is accepted and ignored.
 	PartialResponse bool
@@ -88,9 +91,10 @@ func New(cfg Config, renderer query.PromQL) (*Backend, error) {
 		write[i] = e
 	}
 	client, err := promapi.NewClient(promapi.Config{
-		BaseURLs: cfg.QueryURLs,
-		Timeout:  cfg.Timeout,
-		Headers:  cfg.Headers,
+		ConnectTimeout: cfg.ConnectTimeout,
+		BaseURLs:       cfg.QueryURLs,
+		Timeout:        cfg.Timeout,
+		Headers:        cfg.Headers,
 	})
 	if err != nil {
 		return nil, err

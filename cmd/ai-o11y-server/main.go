@@ -177,12 +177,12 @@ func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, 
 	switch bc.Provider {
 	case config.BackendVictoria:
 		return victoria.New(victoria.Config{
-			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, Limits: limits,
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits,
 			PartialResponse: bc.PartialResponse,
 		}, renderer)
 	case config.BackendThanos:
 		return thanos.New(thanos.Config{
-			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, Limits: limits,
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits,
 			PartialResponse: bc.PartialResponse,
 		}, renderer)
 	default:

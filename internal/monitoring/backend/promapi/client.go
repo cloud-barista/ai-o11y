@@ -26,13 +26,12 @@ import (
 
 const (
 	maxErrorBody = 4 << 10
-	// httpSlack is how much longer the HTTP client waits than the query
-	// timeout it sends, so the backend's own timeout error arrives first.
+	// httpSlack is how much longer the client waits than the query timeout
+	// it sends, so the backend's own timeout error arrives first.
 	httpSlack = 5 * time.Second
-	// dialTimeout bounds connecting to one address, so an address that does
-	// not answer at all hands over to the next one quickly instead of using up
-	// the whole query timeout.
-	dialTimeout = 5 * time.Second
+	// DefaultConnectTimeout bounds connecting to one address, so an address
+	// that does not answer at all hands over to the next one quickly.
+	DefaultConnectTimeout = 5 * time.Second
 )
 
 // Config is where the query API is and how every request is sent.
@@ -44,8 +43,13 @@ type Config struct {
 	// as two queriers or two query proxies in front of replicated storage.
 	BaseURLs []string
 	// Timeout is sent as the timeout parameter of every query, so time spent
-	// waiting for a query slot counts against it too.
+	// waiting for a query slot counts against it too. It also bounds one
+	// request across every address it is tried at, so a slow address leaves
+	// the next one only what remains.
 	Timeout time.Duration
+	// ConnectTimeout bounds connecting to one address; zero takes
+	// DefaultConnectTimeout.
+	ConnectTimeout time.Duration
 	// Headers are set on every request.
 	Headers map[string]string
 	// Params are added to every query, such as Thanos' dedup.
@@ -78,12 +82,18 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.Timeout <= 0 {
 		return nil, errors.New("query timeout must be positive")
 	}
+	if cfg.ConnectTimeout < 0 {
+		return nil, errors.New("connect timeout must not be negative")
+	}
+	if cfg.ConnectTimeout == 0 {
+		cfg.ConnectTimeout = DefaultConnectTimeout
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext
+	transport.DialContext = (&net.Dialer{Timeout: cfg.ConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
 	return &Client{
 		cfg:        cfg,
 		baseURLs:   baseURLs,
-		httpClient: &http.Client{Timeout: cfg.Timeout + httpSlack, Transport: transport},
+		httpClient: &http.Client{Transport: transport},
 		retry:      retry.Default(),
 	}, nil
 }
@@ -154,6 +164,8 @@ func (c *Client) post(ctx context.Context, path string, form url.Values, out any
 // own fault and would be the same at every address, so it is returned at
 // once, as is a 429, which post retries from the first address.
 func (c *Client) postAny(ctx context.Context, path, body string, out any) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout+httpSlack)
+	defer cancel()
 	var (
 		after time.Duration
 		err   error

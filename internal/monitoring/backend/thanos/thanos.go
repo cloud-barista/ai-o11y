@@ -43,7 +43,10 @@ type Config struct {
 	// decision to revisit with the deployment's sharding and replication.
 	PartialResponse bool
 	Timeout         time.Duration
-	Limits          query.ChunkLimits
+	// ConnectTimeout bounds connecting to one query address; zero takes
+	// promapi.DefaultConnectTimeout.
+	ConnectTimeout time.Duration
+	Limits         query.ChunkLimits
 	// Headers are set on every query request.
 	Headers map[string]string
 }
@@ -79,9 +82,10 @@ func New(cfg Config, renderer query.PromQL) (*Backend, error) {
 		write[i] = e
 	}
 	client, err := promapi.NewClient(promapi.Config{
-		BaseURLs: cfg.QueryURLs,
-		Timeout:  cfg.Timeout,
-		Headers:  cfg.Headers,
+		ConnectTimeout: cfg.ConnectTimeout,
+		BaseURLs:       cfg.QueryURLs,
+		Timeout:        cfg.Timeout,
+		Headers:        cfg.Headers,
 		Params: url.Values{
 			// The Querier deduplicates by default; it is sent so a querier
 			// started otherwise still merges replicas.

@@ -255,3 +255,32 @@ func TestAllAddressesFail(t *testing.T) {
 		t.Error("NewClient with an empty address succeeded")
 	}
 }
+
+// TestTimeoutSpansAddresses: the timeout bounds a request across addresses,
+// so a hanging first address does not get a fresh timeout per address.
+func TestTimeoutSpansAddresses(t *testing.T) {
+	release := make(chan struct{})
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer hang.Close()
+	defer close(release)
+
+	c, _ := NewClient(Config{BaseURLs: []string{hang.URL, hang.URL}, Timeout: 100 * time.Millisecond})
+	start := time.Now()
+	if _, err := c.Instant(context.Background(), "up", time.Time{}); err == nil {
+		t.Fatal("Instant against hanging addresses succeeded")
+	}
+	if took := time.Since(start); took > httpSlack+2*time.Second {
+		t.Errorf("took %s, want one timeout for both addresses", took)
+	}
+}
+
+func TestConnectTimeout(t *testing.T) {
+	if _, err := NewClient(Config{BaseURLs: []string{"http://a"}, Timeout: time.Second, ConnectTimeout: -time.Second}); err == nil {
+		t.Error("NewClient with a negative connect timeout succeeded")
+	}
+}

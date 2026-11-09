@@ -42,7 +42,11 @@ type BackendConfig struct {
 	// preference, given as a comma-separated list; a collector moves to the
 	// next while one fails. The collector appends /v1/metrics to each.
 	WriteURLs []string
-	Timeout   time.Duration
+	// Timeout bounds one query, across every query address it is tried at.
+	// ConnectTimeout bounds connecting to one address. Left empty, each takes
+	// the provider's default; a value given must be positive.
+	Timeout        time.Duration
+	ConnectTimeout time.Duration
 	// MaxConcurrent is how many query chunks run at once; MaxIDs is how many
 	// target ids one chunk selects.
 	MaxConcurrent int
@@ -133,6 +137,7 @@ func Load() (*Config, error) {
 		"backend.query_url",
 		"backend.write_url",
 		"backend.timeout",
+		"backend.connect_timeout",
 		"backend.max_concurrent",
 		"backend.max_ids",
 		"backend.partial_response",
@@ -146,6 +151,15 @@ func Load() (*Config, error) {
 	// The provider is AIO11Y_BACKEND itself, not AIO11Y_BACKEND_PROVIDER.
 	if err := v.BindEnv("backend.provider", envPrefix+"_BACKEND"); err != nil {
 		return nil, fmt.Errorf("failed to bind env for %q: %w", "backend.provider", err)
+	}
+
+	timeout, err := optionalDuration(v, "backend.timeout")
+	if err != nil {
+		return nil, err
+	}
+	connectTimeout, err := optionalDuration(v, "backend.connect_timeout")
+	if err != nil {
+		return nil, err
 	}
 
 	cfg := &Config{
@@ -173,7 +187,8 @@ func Load() (*Config, error) {
 			Provider:        strings.ToLower(strings.TrimSpace(v.GetString("backend.provider"))),
 			QueryURLs:       splitURLs(v.GetString("backend.query_url")),
 			WriteURLs:       splitURLs(v.GetString("backend.write_url")),
-			Timeout:         v.GetDuration("backend.timeout"),
+			Timeout:         timeout,
+			ConnectTimeout:  connectTimeout,
 			MaxConcurrent:   v.GetInt("backend.max_concurrent"),
 			MaxIDs:          v.GetInt("backend.max_ids"),
 			PartialResponse: v.GetBool("backend.partial_response"),
@@ -182,8 +197,8 @@ func Load() (*Config, error) {
 	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {
 		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
 	}
-	if cfg.Backend.Timeout < 0 || cfg.Backend.MaxConcurrent < 0 || cfg.Backend.MaxIDs < 0 {
-		return nil, fmt.Errorf("%s_BACKEND_TIMEOUT, _MAX_CONCURRENT and _MAX_IDS must not be negative", envPrefix)
+	if cfg.Backend.MaxConcurrent < 0 || cfg.Backend.MaxIDs < 0 {
+		return nil, fmt.Errorf("%s_BACKEND_MAX_CONCURRENT and _MAX_IDS must not be negative", envPrefix)
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)
@@ -207,4 +222,23 @@ func splitURLs(s string) []string {
 		}
 	}
 	return out
+}
+
+// optionalDuration reads a duration that may be left empty, which gives 0 for
+// the caller's default. A value given must be positive: there is no setting
+// for "no limit".
+func optionalDuration(v *viper.Viper, key string) (time.Duration, error) {
+	env := envPrefix + "_" + strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+	raw := strings.TrimSpace(v.GetString(key))
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a duration such as 30s: %w", env, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %s; leave it empty for the default", env, raw)
+	}
+	return d, nil
 }
