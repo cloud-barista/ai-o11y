@@ -1,0 +1,4 @@
+bin/
+otelcol/_build/
+otelcol/_tools/
+conf/setup.env

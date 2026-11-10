@@ -1,0 +1,3 @@
+index, uuid, name, utilization.gpu [%], memory.used [MiB], temperature.gpu, power.draw [W], pstate, ecc.errors.uncorrected.volatile.total, remapped_rows.pending, retired_pages.pending
+0, GPU-00000000-0000-0000-0000-00000000000a, NVIDIA A100-SXM4-80GB, 87, 40960, 61, 312.45, P0, 0, No, No
+1, GPU-00000000-0000-0000-0000-00000000000b, NVIDIA A100-SXM4-80GB, [Not Supported], 1024, 45, 61.20, P8, 2, Yes, No
