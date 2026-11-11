@@ -248,14 +248,14 @@ func (h *handler) RestDeleteTarget(c echo.Context) error {
 // @Failure 401 {object} model.SimpleMsg "Missing or wrong bearer token"
 // @Router /targets/{targetId}/collectorConfig [get]
 func (h *handler) RestGetTargetCollectorConfig(c echo.Context) error {
-	if h.Backend == nil || h.Backend.WriteEndpoint().URL == "" {
+	if h.Backend == nil || len(h.Backend.WriteEndpoints()) == 0 {
 		return c.JSON(http.StatusServiceUnavailable, model.SimpleMsg{Message: "Metrics backend write address is not configured"})
 	}
 	t, ok, err := h.lookup(c)
 	if !ok {
 		return err
 	}
-	out, err := collector.Render(t, h.Collectors, h.Catalog, h.Backend.WriteEndpoint(), h.CollectorOptions)
+	out, err := collector.Render(t, h.Collectors, h.Catalog, h.Backend.WriteEndpoints(), h.CollectorOptions)
 	if err != nil {
 		log.Error().Err(err).Str("targetId", t.EntityID).Msg("Failed to render collector configuration")
 		return c.JSON(http.StatusInternalServerError, model.SimpleMsg{Message: "Collector configuration could not be built"})

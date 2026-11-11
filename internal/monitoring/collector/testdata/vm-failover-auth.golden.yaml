@@ -1,0 +1,89 @@
+connectors:
+    failover:
+        priority_levels:
+            - - metrics/0
+            - - metrics/1
+exporters:
+    otlp_http/0:
+        auth:
+            authenticator: basicauth/0
+        endpoint: http://vmauth-1:8427/opentelemetry
+        retry_on_failure:
+            enabled: false
+        sending_queue:
+            enabled: false
+    otlp_http/1:
+        auth:
+            authenticator: basicauth/1
+        endpoint: http://vmauth-2:8427/opentelemetry
+        retry_on_failure:
+            enabled: false
+        sending_queue:
+            enabled: false
+extensions:
+    basicauth/0:
+        client_auth:
+            password: ${env:AIO11Y_WRITE_PASSWORD}
+            username: writer
+    basicauth/1:
+        client_auth:
+            password: ${env:AIO11Y_WRITE_PASSWORD}
+            username: writer
+processors:
+    attributes/identity:
+        actions:
+            - action: upsert
+              key: entity_id
+              value: d44ikdomt0tac4ejrmmg
+    batch: {}
+receivers:
+    host_metrics:
+        collection_interval: 30s
+        scrapers:
+            cpu:
+                metrics:
+                    system.cpu.physical.count:
+                        enabled: true
+            disk: {}
+            filesystem: {}
+            load: {}
+            memory:
+                metrics:
+                    system.linux.memory.available:
+                        enabled: true
+                    system.memory.limit:
+                        enabled: true
+                    system.memory.linux.shared:
+                        enabled: true
+                    system.memory.utilization:
+                        enabled: true
+            network: {}
+            paging: {}
+            processes: {}
+            system: {}
+service:
+    extensions:
+        - basicauth/0
+        - basicauth/1
+    pipelines:
+        metrics:
+            exporters:
+                - failover
+            processors:
+                - attributes/identity
+                - batch
+            receivers:
+                - host_metrics
+        metrics/0:
+            exporters:
+                - otlp_http/0
+            receivers:
+                - failover
+        metrics/1:
+            exporters:
+                - otlp_http/1
+            receivers:
+                - failover
+    telemetry:
+        metrics:
+            level: none

@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	"github.com/cloud-barista/ai-o11y/internal/config"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/thanos"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/victoria"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/collector"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/mapping"
@@ -146,19 +148,57 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 		}
 	}
 
-	if cfg.Thanos.QueryURL == "" {
-		log.Warn().Msg("AIO11Y_THANOS_QUERY_URL is not set: queries and collector configuration are unavailable")
-	} else {
-		b, err := thanos.New(thanos.Config{
-			QueryURL:        cfg.Thanos.QueryURL,
-			Write:           monitoring.Endpoint{URL: cfg.Thanos.WriteURL},
-			PartialResponse: cfg.Thanos.PartialResponse,
-			Timeout:         cfg.Thanos.Timeout,
-		}, query.PromQL{Catalog: cat})
-		if err != nil {
-			return rest.Deps{}, err
-		}
+	b, err := newBackend(cfg, query.PromQL{Catalog: cat})
+	if err != nil {
+		return rest.Deps{}, err
+	}
+	if b != nil {
 		deps.Backend = b
 	}
 	return deps, nil
+}
+
+// newBackend builds the metrics backend AIO11Y_BACKEND selects. It returns nil
+// when no query URL is set, leaving queries and collector configuration
+// unavailable.
+func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, error) {
+	bc := cfg.Backend
+	if len(bc.QueryURLs) == 0 {
+		log.Warn().Msg("AIO11Y_BACKEND_QUERY_URL is not set: queries and collector configuration are unavailable")
+		return nil, nil
+	}
+	if len(bc.WriteURLs) == 0 {
+		log.Warn().Msg("AIO11Y_BACKEND_WRITE_URL is not set: collector configuration is unavailable")
+	}
+	write := make([]monitoring.Endpoint, len(bc.WriteURLs))
+	for i, u := range bc.WriteURLs {
+		write[i] = monitoring.Endpoint{URL: u}
+		if bc.WriteUsername != "" {
+			write[i].BasicAuth = &monitoring.BasicAuth{Username: bc.WriteUsername, PasswordEnv: collector.WritePasswordEnv}
+		}
+	}
+	limits := query.ChunkLimits{MaxIDs: bc.MaxIDs, MaxConcurrent: bc.MaxConcurrent}
+	var headers map[string]string
+	if bc.QueryUsername != "" {
+		headers = map[string]string{"Authorization": basicAuth(bc.QueryUsername, bc.QueryPassword)}
+	}
+	switch bc.Provider {
+	case config.BackendVictoria:
+		return victoria.New(victoria.Config{
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits, Headers: headers,
+			PartialResponse: bc.PartialResponse,
+		}, renderer)
+	case config.BackendThanos:
+		return thanos.New(thanos.Config{
+			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits, Headers: headers,
+			PartialResponse: bc.PartialResponse,
+		}, renderer)
+	default:
+		return nil, fmt.Errorf("unknown metrics backend %q", bc.Provider)
+	}
+}
+
+// basicAuth is the Authorization header value of a basic auth account.
+func basicAuth(username, password string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(username+":"+password))
 }

@@ -37,7 +37,7 @@ func vm() monitoring.Target {
 
 var (
 	kinds    = []monitoring.CollectorKind{Hostmetrics{}, NvidiaGPU{}}
-	endpoint = monitoring.Endpoint{URL: "http://prometheus:9090/api/v1/otlp"}
+	endpoint = []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp"}}
 )
 
 func checkGolden(t *testing.T, name string, got []byte) {
@@ -107,10 +107,11 @@ func TestRenderRejects(t *testing.T) {
 	cases := map[string]struct {
 		target   monitoring.Target
 		kinds    []monitoring.CollectorKind
-		endpoint monitoring.Endpoint
+		endpoint []monitoring.Endpoint
 	}{
 		"target without key": {unmapped, kinds, endpoint},
-		"no endpoint":        {vm(), kinds, monitoring.Endpoint{}},
+		"no endpoint":        {vm(), kinds, nil},
+		"endpoint no URL":    {vm(), kinds, []monitoring.Endpoint{endpoint[0], {}}},
 		"no kind applies":    {monitoring.Target{Kind: "datastore", EntityID: "x"}, kinds, endpoint},
 		"duplicate id":       {vm(), []monitoring.CollectorKind{Hostmetrics{}, Hostmetrics{}}, endpoint},
 		"batch clashes":      {vm(), []monitoring.CollectorKind{Hostmetrics{}, fixedKind{frag: monitoring.ConfigFragment{Processors: map[string]any{BatchProcessor: nil}}}}, endpoint},
@@ -225,5 +226,50 @@ func TestRenderTelemetry(t *testing.T) {
 	}
 	if !strings.Contains(string(on), "port: 18889") || !strings.Contains(string(on), "host: 127.0.0.1") {
 		t.Errorf("telemetry on a port:\n%s", on)
+	}
+}
+
+// failover is two write endpoints, as two vmauths in front of replicated
+// storage.
+var failover = []monitoring.Endpoint{
+	{URL: "http://vmauth-1:8427/opentelemetry"},
+	{URL: "http://vmauth-2:8427/opentelemetry"},
+}
+
+// TestRenderFailover pins the configuration for several write endpoints: an
+// exporter per endpoint with its queue and retries off, a pipeline per
+// priority, and the failover connector between them and the metrics pipeline.
+func TestRenderFailover(t *testing.T) {
+	got, err := Render(vm(), kinds, builtin(t), failover, Options{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	checkGolden(t, "vm-failover.golden.yaml", got)
+}
+
+// TestRenderWriteAccount pins the configuration for write endpoints with an
+// account: a basic auth extension per exporter whose password is an
+// environment reference, never the password itself.
+func TestRenderWriteAccount(t *testing.T) {
+	withAuth := make([]monitoring.Endpoint, len(failover))
+	for i, e := range failover {
+		e.BasicAuth = &monitoring.BasicAuth{Username: "writer", PasswordEnv: WritePasswordEnv}
+		withAuth[i] = e
+	}
+	got, err := Render(vm(), kinds, builtin(t), withAuth, Options{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	checkGolden(t, "vm-failover-auth.golden.yaml", got)
+	if !strings.Contains(string(got), "${env:"+WritePasswordEnv+"}") {
+		t.Error("the password is not taken from the environment")
+	}
+	single, err := Render(vm(), kinds, builtin(t), withAuth[:1], Options{})
+	if err != nil || !strings.Contains(string(single), "authenticator: "+ExtensionBasicAuth+"\n") {
+		t.Errorf("single endpoint with an account = %v\n%s", err, single)
+	}
+	bad := []monitoring.Endpoint{{URL: "http://vmauth:8427/opentelemetry", BasicAuth: &monitoring.BasicAuth{Username: "writer"}}}
+	if _, err := Render(vm(), kinds, builtin(t), bad, Options{}); err == nil {
+		t.Error("an account without a password variable rendered")
 	}
 }

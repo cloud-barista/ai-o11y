@@ -17,14 +17,14 @@ import (
 // which hostmetrics calls state="wait" and OpenTelemetry cpu.mode="iowait".
 func TestAttributeSplit(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
-  system_cpu_time_seconds_total{entity_id="a",cpu="0",state="idle"} 0+15x20
-  system_cpu_time_seconds_total{entity_id="a",cpu="0",state="user"} 0+9x20
-  system_cpu_time_seconds_total{entity_id="a",cpu="0",state="wait"} 0+6x20
-  system_memory_usage_bytes{entity_id="a",state="used"} 600x20
-  system_memory_usage_bytes{entity_id="a",state="buffered"} 100x20
-  system_memory_usage_bytes{entity_id="a",state="free"} 300x20
-  system_processes_count{entity_id="a",status="running"} 3x20
-  system_processes_count{entity_id="a",status="zombies"} 1x20
+  {__name__="system.cpu.time",entity_id="a",cpu="0",state="idle"} 0+15x20
+  {__name__="system.cpu.time",entity_id="a",cpu="0",state="user"} 0+9x20
+  {__name__="system.cpu.time",entity_id="a",cpu="0",state="wait"} 0+6x20
+  {__name__="system.memory.usage",entity_id="a",state="used"} 600x20
+  {__name__="system.memory.usage",entity_id="a",state="buffered"} 100x20
+  {__name__="system.memory.usage",entity_id="a",state="free"} 300x20
+  {__name__="system.processes.count",entity_id="a",status="running"} 3x20
+  {__name__="system.processes.count",entity_id="a",status="zombies"} 1x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	at := time.Unix(0, 0).UTC().Add(10 * time.Minute)
@@ -51,18 +51,18 @@ func TestAttributeSplit(t *testing.T) {
 	if got := values(monitoring.QuerySpec{Metric: cpu}, ""); len(got) != 1 || !near(got[""], 0.5) {
 		t.Errorf("CPU default = %v, want the share not idle, 0.5", got)
 	}
-	split := values(monitoring.QuerySpec{Metric: cpu, SplitBy: []string{"cpu.mode"}}, "cpu_mode")
+	split := values(monitoring.QuerySpec{Metric: cpu, SplitBy: []string{"cpu.mode"}}, "cpu.mode")
 	if len(split) != 3 || !near(split["idle"], 0.5) || !near(split["user"], 0.3) || !near(split["iowait"], 0.2) {
 		t.Errorf("CPU by cpu.mode = %v, want idle 0.5, user 0.3, iowait 0.2", split)
 	}
-	if got := values(monitoring.QuerySpec{Metric: cpu, Where: map[string]string{"cpu.mode": "iowait"}}, "cpu_mode"); len(got) != 1 || !near(got["iowait"], 0.2) {
+	if got := values(monitoring.QuerySpec{Metric: cpu, Where: map[string]string{"cpu.mode": "iowait"}}, "cpu.mode"); len(got) != 1 || !near(got["iowait"], 0.2) {
 		t.Errorf("CPU where cpu.mode=iowait = %v", got)
 	}
 
 	if got := values(monitoring.QuerySpec{Metric: "system.memory.usage"}, ""); !near(got[""], 600) {
 		t.Errorf("memory default = %v, want used 600", got)
 	}
-	mem := values(monitoring.QuerySpec{Metric: "system.memory.usage", SplitBy: []string{"system.memory.state"}}, "system_memory_state")
+	mem := values(monitoring.QuerySpec{Metric: "system.memory.usage", SplitBy: []string{"system.memory.state"}}, "system.memory.state")
 	if !near(mem["buffers"], 100) || !near(mem["used"], 600) || !near(mem["free"], 300) {
 		t.Errorf("memory by state = %v, want buffered renamed buffers", mem)
 	}
@@ -71,15 +71,15 @@ func TestAttributeSplit(t *testing.T) {
 	if got := values(monitoring.QuerySpec{Metric: procs}, ""); !near(got[""], 4) {
 		t.Errorf("processes default = %v, want all 4", got)
 	}
-	if got := values(monitoring.QuerySpec{Metric: procs, Where: map[string]string{"process.state": "defunct"}}, "process_state"); !near(got["defunct"], 1) {
+	if got := values(monitoring.QuerySpec{Metric: procs, Where: map[string]string{"process.state": "defunct"}}, "process.state"); !near(got["defunct"], 1) {
 		t.Errorf("defunct = %v, want zombies renamed defunct", got)
 	}
 	stopped := monitoring.QuerySpec{Metric: procs, Where: map[string]string{"process.state": "stopped"}}
-	if got := values(stopped, "process_state"); len(got) != 0 {
+	if got := values(stopped, "process.state"); len(got) != 0 {
 		t.Errorf("stopped without fill = %v, want nothing", got)
 	}
 	stopped.FillZero = true
-	if got := values(stopped, "process_state"); len(got) != 1 || got["stopped"] != 0 {
+	if got := values(stopped, "process.state"); len(got) != 1 || got["stopped"] != 0 {
 		t.Errorf("stopped with fill = %v, want stopped=0", got)
 	}
 
@@ -90,15 +90,15 @@ func TestAttributeSplit(t *testing.T) {
 }
 
 // TestGPUFields runs the GPU fields on series as the nvidia_gpu receiver's
-// nvidia-smi source writes them, after the OTLP translation.
+// nvidia-smi source writes them.
 func TestGPUFields(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
-  nvidia_smi_utilization_gpu_percent{entity_id="a",uuid="GPU-1",index="0",name="T4"} 40x20
-  nvidia_smi_utilization_encoder_percent{entity_id="a",uuid="GPU-1",index="0",name="T4"} 10x20
-  nvidia_smi_utilization_decoder_percent{entity_id="a",uuid="GPU-1",index="0",name="T4"} 0x20
-  nvidia_smi_memory_used_mebibytes{entity_id="a",uuid="GPU-1",index="0",name="T4"} 1024x20
-  nvidia_smi_memory_total_mebibytes{entity_id="a",uuid="GPU-1",index="0",name="T4"} 4096x20
-  nvidia_smi_pstate{entity_id="a",uuid="GPU-1",index="0",name="T4"} 8x20
+  {__name__="nvidia_smi.utilization.gpu",entity_id="a",uuid="GPU-1",index="0",name="T4"} 40x20
+  {__name__="nvidia_smi.utilization.encoder",entity_id="a",uuid="GPU-1",index="0",name="T4"} 10x20
+  {__name__="nvidia_smi.utilization.decoder",entity_id="a",uuid="GPU-1",index="0",name="T4"} 0x20
+  {__name__="nvidia_smi.memory.used",entity_id="a",uuid="GPU-1",index="0",name="T4"} 1024x20
+  {__name__="nvidia_smi.memory.total",entity_id="a",uuid="GPU-1",index="0",name="T4"} 4096x20
+  {__name__="nvidia_smi.pstate",entity_id="a",uuid="GPU-1",index="0",name="T4"} 8x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st,
@@ -123,7 +123,7 @@ func TestGPUFields(t *testing.T) {
 	if got := one(monitoring.QuerySpec{Metric: "hw.gpu.utilization"}, ""); got[""] != 0.4 {
 		t.Errorf("utilization = %v, want 0.4", got)
 	}
-	tasks := one(monitoring.QuerySpec{Metric: "hw.gpu.utilization", SplitBy: []string{"hw.gpu.task"}}, "hw_gpu_task")
+	tasks := one(monitoring.QuerySpec{Metric: "hw.gpu.utilization", SplitBy: []string{"hw.gpu.task"}}, "hw.gpu.task")
 	if tasks["general"] != 0.4 || tasks["encoder"] != 0.1 || tasks["decoder"] != 0 || len(tasks) != 3 {
 		t.Errorf("utilization by task = %v", tasks)
 	}

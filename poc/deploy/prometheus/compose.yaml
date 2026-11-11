@@ -1,0 +1,50 @@
+# Prometheus receives OTLP from the collectors; the Thanos Sidecar exposes its
+# data to the Thanos Querier, which ai-o11y queries.
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND=thanos
+#   AIO11Y_BACKEND_QUERY_URL=http://<host>:${THANOS_QUERY_PORT}
+#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${PROMETHEUS_PORT}/api/v1/otlp
+name: aio11y-prometheus
+
+services:
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-otlp-receiver
+      # The Sidecar needs Prometheus to cut blocks of a fixed size and leave
+      # compaction to Thanos.
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - ${PROMETHEUS_PORT}:9090
+
+  thanos-sidecar:
+    image: quay.io/thanos/thanos:${THANOS_VERSION}
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus:9090
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    volumes:
+      - prometheus-data:/prometheus
+    depends_on: [prometheus]
+
+  thanos-query:
+    image: quay.io/thanos/thanos:${THANOS_VERSION}
+    command:
+      - query
+      - --http-address=0.0.0.0:10902
+      - --endpoint=thanos-sidecar:10901
+    ports:
+      - ${THANOS_QUERY_PORT}:10902
+    depends_on: [thanos-sidecar]
+
+volumes:
+  prometheus-data:

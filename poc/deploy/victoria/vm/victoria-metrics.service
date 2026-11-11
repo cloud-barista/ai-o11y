@@ -1,0 +1,17 @@
+[Unit]
+Description=VictoriaMetrics single-node storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=victoria
+EnvironmentFile=/etc/aio11y-victoria/node.env
+ExecStart=/usr/local/bin/victoria-metrics -httpListenAddr=:8428 \
+  -storageDataPath=${DATA_DIR}/storage \
+  -retentionPeriod=${VM_RETENTION} \
+  -dedup.minScrapeInterval=${VM_DEDUP_INTERVAL}
+Restart=always
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

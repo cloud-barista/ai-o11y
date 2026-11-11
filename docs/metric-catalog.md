@@ -42,8 +42,9 @@ Following OpenTelemetry, a field is split by attributes rather than by name:
   `system.device.name` for disks; `within` collapses it.
 
 Answers carry `entity_id` and the attributes by their OpenTelemetry names.
-Inside PromQL an attribute travels in a label with dots made underscores
-(`cpu_mode`), the way OTLP names reach Prometheus.
+Series keep the metric and attribute names collectors send (`system.cpu.time`,
+`state`), so the backend must store them unchanged; inside PromQL a name with
+dots is quoted (`{"system.cpu.time"}`, `by ("cpu.mode")`).
 
 ## Zero values
 

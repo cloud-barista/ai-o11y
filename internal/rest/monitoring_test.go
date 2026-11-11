@@ -81,8 +81,8 @@ type fakeBackend struct {
 	series []monitoring.Series
 }
 
-func (f *fakeBackend) WriteEndpoint() monitoring.Endpoint {
-	return monitoring.Endpoint{URL: "http://receive:19291/otlp", Protocol: "otlp_http"}
+func (f *fakeBackend) WriteEndpoints() []monitoring.Endpoint {
+	return []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp", Protocol: "otlp_http"}}
 }
 func (f *fakeBackend) Query(_ context.Context, q monitoring.QuerySpec) ([]monitoring.Series, error) {
 	f.got = q
@@ -181,7 +181,7 @@ func TestTargetReads(t *testing.T) {
 		t.Errorf("get unknown = %d", code)
 	}
 	code, body = call(t, s, http.MethodGet, "/targets/k1/collectorConfig", "")
-	if code != http.StatusOK || !strings.Contains(body, "entity_id") || !strings.Contains(body, "http://receive:19291/otlp") {
+	if code != http.StatusOK || !strings.Contains(body, "entity_id") || !strings.Contains(body, "http://prometheus:9090/api/v1/otlp") {
 		t.Errorf("collector config = %d %s", code, body)
 	}
 	if code, _ = call(t, s, http.MethodDelete, "/targets/k1", ""); code != http.StatusOK {
@@ -330,7 +330,7 @@ func TestQuery(t *testing.T) {
 		backend.got.Targets[0].EntityID != "k2" {
 		t.Errorf("query by id = %d", code)
 	}
-	backend.series = []monitoring.Series{{Labels: map[string]string{"entity_id": "k1", "cpu_mode": "user"},
+	backend.series = []monitoring.Series{{Labels: map[string]string{"entity_id": "k1", "cpu.mode": "user"},
 		Points: []monitoring.Point{{T: at, V: 0.25}}}}
 	code, body = call(t, s, http.MethodPost, "/query", `{"metric":"system.cpu.utilization","targetIds":["k1"],"splitBy":["cpu.mode"],"where":{"cpu.mode":"user"}}`)
 	if code != http.StatusOK || !strings.Contains(body, `"cpu.mode":"user"`) || strings.Contains(body, "cpu_mode") {

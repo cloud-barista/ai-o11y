@@ -1,0 +1,21 @@
+# vmauth-2: prefers vmagent-2 for writes and storage B for queries, and
+# moves to the other when that one is down.
+# Two accounts: the writer may only write (collectors), the reader may only
+# query (ai-o11y). %{...} is filled from vmauth's environment.
+users:
+  - username: "%{VMAUTH_WRITER_USERNAME}"
+    password: "%{VMAUTH_WRITER_PASSWORD}"
+    url_map:
+      - src_paths: ["/opentelemetry/.*", "/api/v1/write"]
+        url_prefix:
+          - http://vmagent-2:8429
+          - http://vmagent-1:8429
+        load_balancing_policy: first_available
+  - username: "%{VMAUTH_READER_USERNAME}"
+    password: "%{VMAUTH_READER_PASSWORD}"
+    url_map:
+      - src_paths: ["/api/v1/query", "/api/v1/query_range", "/api/v1/series", "/api/v1/labels", "/api/v1/label/.+/values"]
+        url_prefix:
+          - http://vm-b:8428
+          - http://vm-a:8428
+        load_balancing_policy: first_available

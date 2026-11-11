@@ -85,7 +85,7 @@ func validate(r monitoring.MetricRow) error {
 		if err := checkExpr(r, collector, expr); err != nil {
 			return err
 		}
-		if label := monitoring.AttrLabel(r.Attribute.Name); !strings.Contains(expr, label) {
+		if label := monitoring.PromQLName(r.Attribute.Name); !strings.Contains(expr, label) {
 			return fmt.Errorf("metric %q (%s): split expression does not keep %s", r.Name, collector, label)
 		}
 	}

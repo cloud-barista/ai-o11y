@@ -73,16 +73,3 @@ func TestIdentityFragmentRejectsTargetWithoutKey(t *testing.T) {
 		t.Fatal("IdentityFragment accepted a target without a key")
 	}
 }
-
-func TestValidateLabelName(t *testing.T) {
-	for _, ok := range []string{"entity_id", "uuid", "_x", "A1"} {
-		if err := ValidateLabelName(ok); err != nil {
-			t.Errorf("%q: %v", ok, err)
-		}
-	}
-	for _, bad := range []string{"", "cloud.provider", "cloud-region", "1abc", "__name__"} {
-		if err := ValidateLabelName(bad); err == nil {
-			t.Errorf("%q accepted", bad)
-		}
-	}
-}
