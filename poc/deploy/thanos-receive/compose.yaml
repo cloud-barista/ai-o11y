@@ -1,0 +1,300 @@
+# Three Thanos Receives with replication, writing blocks to a SeaweedFS
+# cluster, read back by a Thanos Querier and Store Gateway; one Compactor.
+# Everything on one host, to try the setup and develop against: the host is
+# still a single point of failure (README.md).
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND_PROVIDER=thanos
+#   AIO11Y_BACKEND_QUERY_URL=http://<host>:${THANOS_QUERY_PORT}
+#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${RECEIVE_1_PORT}/api/v1/otlp,http://<host>:${RECEIVE_2_PORT}/api/v1/otlp,http://<host>:${RECEIVE_3_PORT}/api/v1/otlp
+name: aio11y-thanos-receive
+
+x-seaweedfs: &seaweedfs
+  image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION}
+  restart: unless-stopped
+
+# The masters elect a leader by Raft, so three keep one up through the loss of
+# any one. New volumes get SEAWEEDFS_REPLICATION.
+x-master: &master
+  <<: *seaweedfs
+
+# Every volume server is in the same rack and data center, so replication 001
+# puts the copies of a volume on two different volume servers.
+x-volume: &volume
+  <<: *seaweedfs
+  depends_on: [master-1, master-2, master-3]
+
+# A filer with its S3 gateway. Every filer keeps its metadata in the shared
+# MariaDB (filer.toml), so each one serves every file.
+x-filer: &filer
+  <<: *seaweedfs
+  environment:
+    WEED_MYSQL2_HOSTNAME: mariadb
+    WEED_MYSQL2_DATABASE: seaweedfs
+    WEED_MYSQL2_USERNAME: ${SEAWEEDFS_DB_USER}
+    WEED_MYSQL2_PASSWORD: ${SEAWEEDFS_DB_PASSWORD}
+    AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+    AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+  volumes:
+    - ./filer.toml:/etc/seaweedfs/filer.toml:ro
+  depends_on:
+    mariadb: {condition: service_healthy}
+    master-1: {condition: service_started}
+
+x-thanos: &thanos
+  image: quay.io/thanos/thanos:${THANOS_VERSION}
+  restart: unless-stopped
+
+# A Receive. Each one stores the series the hashring gives it and forwards
+# the rest, keeping RECEIVE_REPLICATION_FACTOR copies of every sample, and
+# uploads a block every 2 hours through its own filer. receive_replica tells
+# the copies apart; the Querier merges them.
+x-receive: &receive
+  <<: *thanos
+  depends_on: [bucket, thanos-data]
+
+services:
+  mariadb:
+    image: mariadb:${MARIADB_VERSION}
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: seaweedfs
+      MARIADB_USER: ${SEAWEEDFS_DB_USER}
+      MARIADB_PASSWORD: ${SEAWEEDFS_DB_PASSWORD}
+    volumes: [mariadb:/var/lib/mysql]
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 5s
+      retries: 30
+
+  master-1:
+    <<: *master
+    command:
+      - master
+      - -port=9333
+      - -ip=master-1
+      - -mdir=/data
+      - -peers=master-1:9333,master-2:9333,master-3:9333
+      - -defaultReplication=${SEAWEEDFS_REPLICATION}
+      - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
+    volumes: [master-1:/data]
+  master-2:
+    <<: *master
+    command:
+      - master
+      - -port=9333
+      - -ip=master-2
+      - -mdir=/data
+      - -peers=master-1:9333,master-2:9333,master-3:9333
+      - -defaultReplication=${SEAWEEDFS_REPLICATION}
+      - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
+    volumes: [master-2:/data]
+  master-3:
+    <<: *master
+    command:
+      - master
+      - -port=9333
+      - -ip=master-3
+      - -mdir=/data
+      - -peers=master-1:9333,master-2:9333,master-3:9333
+      - -defaultReplication=${SEAWEEDFS_REPLICATION}
+      - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
+    volumes: [master-3:/data]
+
+  volume-1:
+    <<: *volume
+    command:
+      - volume
+      - -port=8080
+      - -ip=volume-1
+      - -dir=/data
+      - -max=0
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -master=master-1:9333,master-2:9333,master-3:9333
+    volumes: [volume-1:/data]
+  volume-2:
+    <<: *volume
+    command:
+      - volume
+      - -port=8080
+      - -ip=volume-2
+      - -dir=/data
+      - -max=0
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -master=master-1:9333,master-2:9333,master-3:9333
+    volumes: [volume-2:/data]
+  volume-3:
+    <<: *volume
+    command:
+      - volume
+      - -port=8080
+      - -ip=volume-3
+      - -dir=/data
+      - -max=0
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -master=master-1:9333,master-2:9333,master-3:9333
+    volumes: [volume-3:/data]
+
+  filer-1:
+    <<: *filer
+    command:
+      - filer
+      - -port=8888
+      - -ip=filer-1
+      - -s3
+      - -s3.port=8333
+      - -master=master-1:9333,master-2:9333,master-3:9333
+  filer-2:
+    <<: *filer
+    command:
+      - filer
+      - -port=8888
+      - -ip=filer-2
+      - -s3
+      - -s3.port=8333
+      - -master=master-1:9333,master-2:9333,master-3:9333
+  filer-3:
+    <<: *filer
+    command:
+      - filer
+      - -port=8888
+      - -ip=filer-3
+      - -s3
+      - -s3.port=8333
+      - -master=master-1:9333,master-2:9333,master-3:9333
+
+  # Creates the bucket once the filers are up; an existing bucket is kept.
+  bucket:
+    <<: *seaweedfs
+    restart: on-failure
+    entrypoint: [sh, -c]
+    command:
+      - >-
+        echo "s3.bucket.list" | weed shell -master=master-1:9333,master-2:9333,master-3:9333 | grep -q "^  ${S3_BUCKET}[[:space:]]" ||
+        echo "s3.bucket.create -name ${S3_BUCKET}" | weed shell -master=master-1:9333,master-2:9333,master-3:9333
+    depends_on: [filer-1, filer-2, filer-3, volume-1, volume-2, volume-3]
+
+  # Thanos runs as uid 1001 and the data volumes start owned by root; this
+  # hands them over once, before the Thanos services start.
+  thanos-data:
+    image: quay.io/thanos/thanos:${THANOS_VERSION}
+    user: root
+    entrypoint: [chown, "1001:1001", /receive-1, /receive-2, /receive-3, /store, /compact]
+    volumes: [receive-1:/receive-1, receive-2:/receive-2, receive-3:/receive-3, store:/store, compact:/compact]
+
+  receive-1:
+    <<: *receive
+    command:
+      - receive
+      - --tsdb.path=/data
+      - --tsdb.retention=${RECEIVE_RETENTION}
+      # Collectors send at their own times, so a late sample is not rejected.
+      - --tsdb.out-of-order.time-window=10m
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --remote-write.address=0.0.0.0:19291
+      - --receive.hashrings-file=/etc/thanos/hashring.json
+      - --receive.hashrings-algorithm=ketama
+      - --receive.replication-factor=${RECEIVE_REPLICATION_FACTOR}
+      - --receive.local-endpoint=receive-1:10901
+      - --label=receive_replica="1"
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-1:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [receive-1:/data, ./hashring.json:/etc/thanos/hashring.json:ro]
+    ports: ["${RECEIVE_1_PORT}:19291"]
+  receive-2:
+    <<: *receive
+    command:
+      - receive
+      - --tsdb.path=/data
+      - --tsdb.retention=${RECEIVE_RETENTION}
+      - --tsdb.out-of-order.time-window=10m
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --remote-write.address=0.0.0.0:19291
+      - --receive.hashrings-file=/etc/thanos/hashring.json
+      - --receive.hashrings-algorithm=ketama
+      - --receive.replication-factor=${RECEIVE_REPLICATION_FACTOR}
+      - --receive.local-endpoint=receive-2:10901
+      - --label=receive_replica="2"
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-2:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [receive-2:/data, ./hashring.json:/etc/thanos/hashring.json:ro]
+    ports: ["${RECEIVE_2_PORT}:19291"]
+  receive-3:
+    <<: *receive
+    command:
+      - receive
+      - --tsdb.path=/data
+      - --tsdb.retention=${RECEIVE_RETENTION}
+      - --tsdb.out-of-order.time-window=10m
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --remote-write.address=0.0.0.0:19291
+      - --receive.hashrings-file=/etc/thanos/hashring.json
+      - --receive.hashrings-algorithm=ketama
+      - --receive.replication-factor=${RECEIVE_REPLICATION_FACTOR}
+      - --receive.local-endpoint=receive-3:10901
+      - --label=receive_replica="3"
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-3:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [receive-3:/data, ./hashring.json:/etc/thanos/hashring.json:ro]
+    ports: ["${RECEIVE_3_PORT}:19291"]
+
+  # Serves the blocks in the bucket to the Querier.
+  store:
+    <<: *thanos
+    command:
+      - store
+      - --data-dir=/data
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-1:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [store:/data]
+    depends_on: [bucket, thanos-data]
+
+  # Recent samples from the Receives, older blocks from the Store Gateway;
+  # the copies differ only in receive_replica, which it deduplicates on.
+  query:
+    <<: *thanos
+    command:
+      - query
+      - --http-address=0.0.0.0:10902
+      - --endpoint=receive-1:10901
+      - --endpoint=receive-2:10901
+      - --endpoint=receive-3:10901
+      - --endpoint=store:10901
+      - --query.replica-label=receive_replica
+    ports: ["${THANOS_QUERY_PORT}:10902"]
+    depends_on: [receive-1, receive-2, receive-3, store]
+
+  # Compacts and downsamples the bucket and applies its retention. One per
+  # bucket only: a second would compact the same blocks twice.
+  compact:
+    <<: *thanos
+    command:
+      - compact
+      - --wait
+      - --data-dir=/data
+      - --http-address=0.0.0.0:10902
+      - --retention.resolution-raw=${COMPACT_RETENTION_RAW}
+      - --retention.resolution-5m=${COMPACT_RETENTION_5M}
+      - --retention.resolution-1h=${COMPACT_RETENTION_1H}
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-1:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [compact:/data]
+    depends_on: [bucket, thanos-data]
+
+volumes:
+  mariadb:
+  master-1:
+  master-2:
+  master-3:
+  volume-1:
+  volume-2:
+  volume-3:
+  receive-1:
+  receive-2:
+  receive-3:
+  store:
+  compact:

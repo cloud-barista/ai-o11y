@@ -1,0 +1,25 @@
+# SeaweedFS filer metadata store: the MariaDB every filer shares, so any filer
+# serves any file. Replaces the image's own filer.toml (a local leveldb2, which
+# only the filer that wrote it could read). The connection comes from the
+# environment (WEED_MYSQL2_HOSTNAME, _USERNAME, _PASSWORD, _DATABASE in
+# compose.yaml), which overrides the values here.
+[mysql2]
+enabled = true
+createTable = """
+  CREATE TABLE IF NOT EXISTS `%s` (
+    `dirhash`   BIGINT NOT NULL,
+    `name`      VARCHAR(766) NOT NULL,
+    `directory` TEXT NOT NULL,
+    `meta`      LONGBLOB,
+    PRIMARY KEY (`dirhash`, `name`)
+  ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+"""
+port = 3306
+connection_max_idle = 10
+connection_max_open = 50
+connection_max_lifetime_seconds = 300
+interpolateParams = false
+enableUpsert = true
+# MariaDB has no "INSERT ... AS new" (the MySQL 8 form SeaweedFS defaults to),
+# so the upsert reads the new value with VALUES().
+upsertQuery = """INSERT INTO `%s` (`dirhash`,`name`,`directory`,`meta`) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE `meta` = VALUES(`meta`)"""

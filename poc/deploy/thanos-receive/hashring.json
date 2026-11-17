@@ -1,0 +1,6 @@
+[
+  {
+    "hashring": "default",
+    "endpoints": ["receive-1:10901", "receive-2:10901", "receive-3:10901"]
+  }
+]
