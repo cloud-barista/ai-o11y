@@ -21,7 +21,7 @@ front of vmauth before it is reachable from outside a private network.
 ai-o11y settings:
 
 ```sh
-AIO11Y_BACKEND=victoria
+AIO11Y_BACKEND_PROVIDER=victoria
 AIO11Y_BACKEND_QUERY_URL=http://<vmauth-1>:8427,http://<vmauth-2>:8427
 AIO11Y_BACKEND_WRITE_URL=http://<vmauth-1>:8427/opentelemetry/v1/metrics,http://<vmauth-2>:8427/opentelemetry/v1/metrics
 AIO11Y_BACKEND_QUERY_USERNAME=<reader>

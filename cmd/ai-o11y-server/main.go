@@ -158,7 +158,7 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 	return deps, nil
 }
 
-// newBackend builds the metrics backend AIO11Y_BACKEND selects. It returns nil
+// newBackend builds the metrics backend AIO11Y_BACKEND_PROVIDER selects. It returns nil
 // when no query URL is set, leaving queries and collector configuration
 // unavailable.
 func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, error) {

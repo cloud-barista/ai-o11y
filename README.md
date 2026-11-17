@@ -25,7 +25,7 @@ CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / V
 | `internal/monitoring/source/tumblebug` | Management platform adapter for CB-Tumblebug. |
 | `internal/monitoring/catalog` | Metric catalog: the fields queries name, see [docs/metric-catalog.md](docs/metric-catalog.md). |
 | `internal/monitoring/query` | Renders queries to PromQL and runs them in chunks of targets. |
-| `internal/monitoring/backend` | Prometheus query API client and the Thanos and VictoriaMetrics backends, selected by `AIO11Y_BACKEND`. |
+| `internal/monitoring/backend` | Prometheus query API client and the Thanos and VictoriaMetrics backends, selected by `AIO11Y_BACKEND_PROVIDER`. |
 | `internal/monitoring/collector` | Renders the collector configuration of a target. |
 | `otelcol/` | The collector, built with the OpenTelemetry Collector Builder, and its own components (`otelcol/receiver/nvidiagpureceiver`). Not part of the service's Go module. |
 

@@ -11,7 +11,7 @@ collector ──OTLP/HTTP──▶ Prometheus ◀── Thanos Sidecar ◀──
 ai-o11y settings:
 
 ```sh
-AIO11Y_BACKEND=thanos
+AIO11Y_BACKEND_PROVIDER=thanos
 AIO11Y_BACKEND_QUERY_URL=http://<host>:10902
 AIO11Y_BACKEND_WRITE_URL=http://<host>:9090/api/v1/otlp/v1/metrics
 ```

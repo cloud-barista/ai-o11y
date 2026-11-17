@@ -33,7 +33,7 @@ type CollectorConfig struct {
 // provider is selected; a zero value takes the provider's default. An empty
 // query URL leaves queries and collector configuration unavailable.
 type BackendConfig struct {
-	// Provider is "thanos" or "victoria" (AIO11Y_BACKEND).
+	// Provider is "thanos" or "victoria" (AIO11Y_BACKEND_PROVIDER).
 	Provider string
 	// QueryURLs are addresses serving the Prometheus query API, in order of
 	// preference, given as a comma-separated list; a query moves to the next
@@ -68,7 +68,7 @@ type BackendConfig struct {
 	WriteUsername string
 }
 
-// Metrics backend providers AIO11Y_BACKEND selects.
+// Metrics backend providers AIO11Y_BACKEND_PROVIDER selects.
 const (
 	BackendThanos   = "thanos"
 	BackendVictoria = "victoria"
@@ -162,11 +162,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// The provider is AIO11Y_BACKEND itself, not AIO11Y_BACKEND_PROVIDER.
-	if err := v.BindEnv("backend.provider", envPrefix+"_BACKEND"); err != nil {
-		return nil, fmt.Errorf("failed to bind env for %q: %w", "backend.provider", err)
-	}
-
 	timeout, err := optionalDuration(v, "backend.timeout")
 	if err != nil {
 		return nil, err
@@ -221,7 +216,7 @@ func Load() (*Config, error) {
 		},
 	}
 	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {
-		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
+		return nil, fmt.Errorf("%s_BACKEND_PROVIDER must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
 	}
 	if (cfg.Backend.QueryUsername == "") != (cfg.Backend.QueryPassword == "") {
 		return nil, fmt.Errorf("%s_BACKEND_QUERY_USERNAME and _QUERY_PASSWORD must be set together", envPrefix)

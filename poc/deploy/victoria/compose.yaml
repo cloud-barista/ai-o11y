@@ -3,7 +3,7 @@
 # go to a vmagent, queries to a storage, each to the first one that is up.
 #
 # ai-o11y settings for this setup:
-#   AIO11Y_BACKEND=victoria
+#   AIO11Y_BACKEND_PROVIDER=victoria
 #   AIO11Y_BACKEND_QUERY_URL=http://<host>:${VMAUTH_1_PORT},http://<host>:${VMAUTH_2_PORT}
 #   AIO11Y_BACKEND_WRITE_URL=http://<host>:${VMAUTH_1_PORT}/opentelemetry/v1/metrics,http://<host>:${VMAUTH_2_PORT}/opentelemetry/v1/metrics
 #   AIO11Y_BACKEND_QUERY_USERNAME=${VMAUTH_READER_USERNAME}
