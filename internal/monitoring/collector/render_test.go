@@ -37,7 +37,7 @@ func vm() monitoring.Target {
 
 var (
 	kinds    = []monitoring.CollectorKind{Hostmetrics{}, NvidiaGPU{}}
-	endpoint = []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp"}}
+	endpoint = []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp/v1/metrics"}}
 )
 
 func checkGolden(t *testing.T, name string, got []byte) {
@@ -232,8 +232,8 @@ func TestRenderTelemetry(t *testing.T) {
 // failover is two write endpoints, as two vmauths in front of replicated
 // storage.
 var failover = []monitoring.Endpoint{
-	{URL: "http://vmauth-1:8427/opentelemetry"},
-	{URL: "http://vmauth-2:8427/opentelemetry"},
+	{URL: "http://vmauth-1:8427/opentelemetry/v1/metrics"},
+	{URL: "http://vmauth-2:8427/opentelemetry/v1/metrics"},
 }
 
 // TestRenderFailover pins the configuration for several write endpoints: an
@@ -268,7 +268,7 @@ func TestRenderWriteAccount(t *testing.T) {
 	if err != nil || !strings.Contains(string(single), "authenticator: "+ExtensionBasicAuth+"\n") {
 		t.Errorf("single endpoint with an account = %v\n%s", err, single)
 	}
-	bad := []monitoring.Endpoint{{URL: "http://vmauth:8427/opentelemetry", BasicAuth: &monitoring.BasicAuth{Username: "writer"}}}
+	bad := []monitoring.Endpoint{{URL: "http://vmauth:8427/opentelemetry/v1/metrics", BasicAuth: &monitoring.BasicAuth{Username: "writer"}}}
 	if _, err := Render(vm(), kinds, builtin(t), bad, Options{}); err == nil {
 		t.Error("an account without a password variable rendered")
 	}

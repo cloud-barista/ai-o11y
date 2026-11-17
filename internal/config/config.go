@@ -41,7 +41,8 @@ type BackendConfig struct {
 	QueryURLs []string
 	// WriteURLs are where collectors send samples over OTLP/HTTP, in order of
 	// preference, given as a comma-separated list; a collector moves to the
-	// next while one fails. The collector appends /v1/metrics to each.
+	// next while one fails. Each is the full URL a collector posts to; nothing is
+	// appended.
 	WriteURLs []string
 	// Timeout bounds one query, across every query address it is tried at.
 	// ConnectTimeout bounds connecting to one address. Left empty, each takes

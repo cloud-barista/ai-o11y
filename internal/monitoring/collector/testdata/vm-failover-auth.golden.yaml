@@ -7,7 +7,7 @@ exporters:
     otlp_http/0:
         auth:
             authenticator: basicauth/0
-        endpoint: http://vmauth-1:8427/opentelemetry
+        metrics_endpoint: http://vmauth-1:8427/opentelemetry/v1/metrics
         retry_on_failure:
             enabled: false
         sending_queue:
@@ -15,7 +15,7 @@ exporters:
     otlp_http/1:
         auth:
             authenticator: basicauth/1
-        endpoint: http://vmauth-2:8427/opentelemetry
+        metrics_endpoint: http://vmauth-2:8427/opentelemetry/v1/metrics
         retry_on_failure:
             enabled: false
         sending_queue:

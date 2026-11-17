@@ -169,7 +169,7 @@ func exportTo(endpoints []monitoring.Endpoint) output {
 // extension under authID to extensions, its password taken from the
 // collector host's environment when the collector starts.
 func exporterConfig(e monitoring.Endpoint, authID string, extensions map[string]any) map[string]any {
-	cfg := map[string]any{"endpoint": e.URL}
+	cfg := map[string]any{"metrics_endpoint": e.URL}
 	if len(e.Headers) > 0 {
 		cfg["headers"] = maps.Clone(e.Headers)
 	}

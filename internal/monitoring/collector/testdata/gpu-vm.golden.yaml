@@ -1,6 +1,6 @@
 exporters:
     otlp_http:
-        endpoint: http://prometheus:9090/api/v1/otlp
+        metrics_endpoint: http://prometheus:9090/api/v1/otlp/v1/metrics
 processors:
     attributes/identity:
         actions:
