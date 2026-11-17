@@ -1,4 +1,4 @@
-# VictoriaMetrics sample
+# VictoriaMetrics single-node pair
 
 Two single-node VictoriaMetrics (A, B) holding the same data. Collectors write
 through a vmauth to a vmagent, which writes every sample to both storages and
@@ -34,23 +34,25 @@ own environment; ai-o11y never holds it. A collector started without it runs,
 but every write is refused (401).
 
 vmagent stores Prometheus names (`system_cpu_time_seconds_total`), the names
-ai-o11y's metric catalog queries, with `-opentelemetry.usePrometheusNaming`. Each storage deduplicates the two copies a vmagent
-failover may write (`-dedup.minScrapeInterval`, the collection interval).
+ai-o11y's metric catalog queries, with `-opentelemetry.usePrometheusNaming`.
+Each storage deduplicates the two copies a vmagent failover may write
+(`-dedup.minScrapeInterval`, the collection interval).
 
-## On one host (docker compose)
+## On one host: [single/](single/)
 
-[compose.yaml](compose.yaml) runs all of it on one host, vmauth-1 on port 8427
-and vmauth-2 on 8428 by default; see [.env.example](.env.example).
+[single/compose.yaml](single/compose.yaml) runs all of it on one host,
+vmauth-1 on port 8427 and vmauth-2 on 8428 by default; see
+[single/.env.example](single/.env.example).
 
-## On two VMs
+## Distributed: [distributed/](distributed/)
 
-[vm/](vm/) installs one storage VM: VictoriaMetrics, a vmagent writing to both
-VMs' storages and a vmauth preferring its own VM, as systemd services. Run it
-on each VM with SELF and PEER swapped:
+[distributed/](distributed/) installs one storage VM: VictoriaMetrics, a
+vmagent writing to both VMs' storages and a vmauth preferring its own VM, as
+systemd services (no Docker). Run it on each VM with SELF and PEER swapped:
 
 ```sh
-cp vm/node.env.example vm/node.env   # set SELF_ADDR, PEER_ADDR and the rest
-sudo vm/install.sh vm/node.env
+cp distributed/node.env.example distributed/node.env   # set SELF_ADDR, PEER_ADDR and the rest
+sudo distributed/install.sh distributed/node.env
 ```
 
 It downloads the release from GitHub and checks it against the release's

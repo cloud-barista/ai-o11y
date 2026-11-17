@@ -1,4 +1,4 @@
-# Prometheus + Thanos sample
+# Prometheus + Thanos Sidecar
 
 One Prometheus taking OTLP from the collectors, a Thanos Sidecar next to it and
 a Thanos Querier in front, the shape ai-o11y's Thanos backend was first tested
@@ -18,8 +18,14 @@ AIO11Y_BACKEND_WRITE_URL=http://<host>:9090/api/v1/otlp/v1/metrics
 
 Prometheus stores Prometheus names (`system_cpu_time_seconds_total`), the names
 ai-o11y's metric catalog queries: `otlp.translation_strategy:
-UnderscoreEscapingWithSuffixes` in [prometheus.yml](prometheus.yml), its
+UnderscoreEscapingWithSuffixes` in [single/prometheus.yml](single/prometheus.yml), its
 default, written out because the catalog depends on it.
 
 This sample has no authentication: the Thanos Querier has none of its own, so
 an account for queries needs a proxy in front of it.
+
+## On one host: [single/](single/)
+
+[single/compose.yaml](single/compose.yaml) runs it on one host, Prometheus on
+port 9090 and the Querier on 10902 by default; see
+[single/.env.example](single/.env.example).

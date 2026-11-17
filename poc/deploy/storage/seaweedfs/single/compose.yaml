@@ -1,0 +1,176 @@
+# A SeaweedFS cluster with an S3 gateway, the object storage Thanos writes
+# blocks to: three masters, three volume servers, three filers with their S3
+# gateways and the MariaDB the filers keep their metadata in. Everything on
+# one host, to try the setup and develop against (../README.md).
+#
+# Thanos reaches it at filer-N:8333 (S3, path style, no TLS) with
+# S3_ACCESS_KEY and S3_SECRET_KEY, bucket S3_BUCKET. The thanos-* samples
+# include this file.
+name: aio11y-seaweedfs
+
+x-seaweedfs: &seaweedfs
+  image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION}
+  restart: unless-stopped
+
+# The masters elect a leader by Raft, so three keep one up through the loss of
+# any one. New volumes get SEAWEEDFS_REPLICATION.
+x-master: &master
+  <<: *seaweedfs
+
+# Every volume server is in the same rack and data center, so replication 001
+# puts the copies of a volume on two different volume servers.
+x-volume: &volume
+  <<: *seaweedfs
+  depends_on: [master-1, master-2, master-3]
+
+# A filer with its S3 gateway. Every filer keeps its metadata in the shared
+# MariaDB (filer.toml), so each one serves every file.
+x-filer: &filer
+  <<: *seaweedfs
+  environment:
+    WEED_MYSQL2_HOSTNAME: mariadb
+    WEED_MYSQL2_DATABASE: seaweedfs
+    WEED_MYSQL2_USERNAME: ${SEAWEEDFS_DB_USER}
+    WEED_MYSQL2_PASSWORD: ${SEAWEEDFS_DB_PASSWORD}
+    AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+    AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+  volumes:
+    - ./filer.toml:/etc/seaweedfs/filer.toml:ro
+  depends_on:
+    mariadb: {condition: service_healthy}
+    master-1: {condition: service_started}
+
+
+services:
+  mariadb:
+    image: mariadb:${MARIADB_VERSION}
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: seaweedfs
+      MARIADB_USER: ${SEAWEEDFS_DB_USER}
+      MARIADB_PASSWORD: ${SEAWEEDFS_DB_PASSWORD}
+    volumes: [mariadb:/var/lib/mysql]
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 5s
+      retries: 30
+
+  master-1:
+    <<: *master
+    command:
+      - master
+      - -port=9333
+      - -ip=master-1
+      - -mdir=/data
+      - -peers=master-1:9333,master-2:9333,master-3:9333
+      - -defaultReplication=${SEAWEEDFS_REPLICATION}
+      - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
+    volumes: [master-1:/data]
+  master-2:
+    <<: *master
+    command:
+      - master
+      - -port=9333
+      - -ip=master-2
+      - -mdir=/data
+      - -peers=master-1:9333,master-2:9333,master-3:9333
+      - -defaultReplication=${SEAWEEDFS_REPLICATION}
+      - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
+    volumes: [master-2:/data]
+  master-3:
+    <<: *master
+    command:
+      - master
+      - -port=9333
+      - -ip=master-3
+      - -mdir=/data
+      - -peers=master-1:9333,master-2:9333,master-3:9333
+      - -defaultReplication=${SEAWEEDFS_REPLICATION}
+      - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
+    volumes: [master-3:/data]
+
+  volume-1:
+    <<: *volume
+    command:
+      - volume
+      - -port=8080
+      - -ip=volume-1
+      - -dir=/data
+      - -max=0
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -master=master-1:9333,master-2:9333,master-3:9333
+    volumes: [volume-1:/data]
+  volume-2:
+    <<: *volume
+    command:
+      - volume
+      - -port=8080
+      - -ip=volume-2
+      - -dir=/data
+      - -max=0
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -master=master-1:9333,master-2:9333,master-3:9333
+    volumes: [volume-2:/data]
+  volume-3:
+    <<: *volume
+    command:
+      - volume
+      - -port=8080
+      - -ip=volume-3
+      - -dir=/data
+      - -max=0
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -master=master-1:9333,master-2:9333,master-3:9333
+    volumes: [volume-3:/data]
+
+  filer-1:
+    <<: *filer
+    command:
+      - filer
+      - -port=8888
+      - -ip=filer-1
+      - -s3
+      - -s3.port=8333
+      - -master=master-1:9333,master-2:9333,master-3:9333
+  filer-2:
+    <<: *filer
+    command:
+      - filer
+      - -port=8888
+      - -ip=filer-2
+      - -s3
+      - -s3.port=8333
+      - -master=master-1:9333,master-2:9333,master-3:9333
+  filer-3:
+    <<: *filer
+    command:
+      - filer
+      - -port=8888
+      - -ip=filer-3
+      - -s3
+      - -s3.port=8333
+      - -master=master-1:9333,master-2:9333,master-3:9333
+
+  # Creates the bucket once the filers are up; an existing bucket is kept.
+  bucket:
+    <<: *seaweedfs
+    restart: on-failure
+    entrypoint: [sh, -c]
+    command:
+      - >-
+        echo "s3.bucket.list" | weed shell -master=master-1:9333,master-2:9333,master-3:9333 | grep -q "^  ${S3_BUCKET}[[:space:]]" ||
+        echo "s3.bucket.create -name ${S3_BUCKET}" | weed shell -master=master-1:9333,master-2:9333,master-3:9333
+    depends_on: [filer-1, filer-2, filer-3, volume-1, volume-2, volume-3]
+
+volumes:
+  mariadb:
+  master-1:
+  master-2:
+  master-3:
+  volume-1:
+  volume-2:
+  volume-3:
