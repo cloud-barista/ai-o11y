@@ -16,10 +16,10 @@ AIO11Y_BACKEND_QUERY_URL=http://<host>:10902
 AIO11Y_BACKEND_WRITE_URL=http://<host>:9090/api/v1/otlp/v1/metrics
 ```
 
-Prometheus keeps the names collectors send (`otlp.translation_strategy:
-NoTranslation` in [prometheus.yml](prometheus.yml)), the names ai-o11y's metric
-catalog queries. A Thanos Receive in place of Prometheus would not do: it
-rewrites the names on the way in.
+Prometheus stores Prometheus names (`system_cpu_time_seconds_total`), the names
+ai-o11y's metric catalog queries: `otlp.translation_strategy:
+UnderscoreEscapingWithSuffixes` in [prometheus.yml](prometheus.yml), its
+default, written out because the catalog depends on it.
 
 This sample has no authentication: the Thanos Querier has none of its own, so
 an account for queries needs a proxy in front of it.

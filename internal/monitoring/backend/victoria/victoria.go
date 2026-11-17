@@ -38,9 +38,10 @@ type Config struct {
 	// when one cannot be reached or answers with a 5xx.
 	QueryURLs []string
 	// Write is where collectors send samples (OTLP over HTTP), in order of
-	// preference, such as vmauths in front of the storage. VictoriaMetrics
-	// keeps the names collectors send by default, which the metric catalog
-	// queries; -opentelemetry.usePrometheusNaming must stay off.
+	// preference, such as vmauths in front of the storage. Whatever takes the
+	// OTLP writes (vmagent or VictoriaMetrics) needs
+	// -opentelemetry.usePrometheusNaming, to store the Prometheus names
+	// (system_cpu_time_seconds_total) the metric catalog queries.
 	Write   []monitoring.Endpoint
 	Timeout time.Duration
 	// ConnectTimeout bounds connecting to one query address; zero takes

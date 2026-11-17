@@ -6,14 +6,15 @@ Wants=network-online.target
 [Service]
 User=victoria
 EnvironmentFile=/etc/aio11y-victoria/node.env
-# Keeps the names collectors send (-opentelemetry.usePrometheusNaming stays
-# off), the names ai-o11y's metric catalog queries.
+# Stores Prometheus names (-opentelemetry.usePrometheusNaming), the names
+# ai-o11y's metric catalog queries.
 ExecStart=/usr/local/bin/vmagent -httpListenAddr=:8429 \
   -remoteWrite.url=http://${SELF_ADDR}:8428/api/v1/write \
   -remoteWrite.url=http://${PEER_ADDR}:8428/api/v1/write \
   -remoteWrite.tmpDataPath=${DATA_DIR}/vmagent \
   -remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_PER_URL} \
-  -opentelemetry.promoteScopeMetadata=${VMAGENT_OTLP_SCOPE_LABELS}
+  -opentelemetry.promoteScopeMetadata=${VMAGENT_OTLP_SCOPE_LABELS} \
+  -opentelemetry.usePrometheusNaming
 Restart=always
 LimitNOFILE=65536
 

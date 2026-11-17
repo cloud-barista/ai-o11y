@@ -42,9 +42,13 @@ Following OpenTelemetry, a field is split by attributes rather than by name:
   `system.device.name` for disks; `within` collapses it.
 
 Answers carry `entity_id` and the attributes by their OpenTelemetry names.
-Series keep the metric and attribute names collectors send (`system.cpu.time`,
-`state`), so the backend must store them unchanged; inside PromQL a name with
-dots is quoted (`{"system.cpu.time"}`, `by ("cpu.mode")`).
+Expressions read the series under the names the backend stores: the
+Prometheus names every supported backend gives an OTLP metric, dots turned
+into underscores and the unit and `_total` appended (`system.cpu.time` in
+seconds is `system_cpu_time_seconds_total`). Collector attribute names have no
+dots and stay as sent (`state`). The attributes ai-o11y answers with keep
+their OpenTelemetry names; inside PromQL a name with dots is quoted
+(`by ("cpu.mode")`).
 
 ## Zero values
 
@@ -56,7 +60,7 @@ The default is off.
 
 ## Fields
 
-GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpureceiver`), which reads `nvidia-smi` and writes each query field as `nvidia_smi.<field>`. Within a target they are split by the GPU's UUID, `hw.id` for common fields and `uuid` for nvidia-smi's own.
+GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpureceiver`), which reads `nvidia-smi` and writes each query field as `nvidia_smi.<field>` with nvidia-smi's unit, stored as `nvidia_smi_<field>_<unit>` (`nvidia_smi_utilization_gpu_percent`). Within a target they are split by the GPU's UUID, `hw.id` for common fields and `uuid` for nvidia-smi's own.
 
 | Field | Schema | Unit | Attribute (values) | Dimension | Provided |
 |---|---|---|---|---|---|

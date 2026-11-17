@@ -11,9 +11,8 @@
 #   AIO11Y_BACKEND_WRITE_USERNAME=${VMAUTH_WRITER_USERNAME}
 # and AIO11Y_WRITE_PASSWORD=${VMAUTH_WRITER_PASSWORD} where each collector runs.
 #
-# vmagent keeps the names collectors send (system.cpu.time), the names
-# ai-o11y's metric catalog queries: -opentelemetry.usePrometheusNaming stays
-# off, its default.
+# vmagent stores Prometheus names (system_cpu_time_seconds_total), the names
+# ai-o11y's metric catalog queries: -opentelemetry.usePrometheusNaming.
 name: aio11y-victoria
 
 x-storage: &storage
@@ -31,6 +30,7 @@ x-vmagent: &vmagent
     - -remoteWrite.tmpDataPath=/buffer
     - -remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_PER_URL}
     - -opentelemetry.promoteScopeMetadata=${VMAGENT_OTLP_SCOPE_LABELS}
+    - -opentelemetry.usePrometheusNaming
 
 services:
   vm-a:

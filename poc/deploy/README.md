@@ -10,8 +10,8 @@ each directory's `.env.example`, and nothing here holds credentials.
 | [prometheus](prometheus/) | Prometheus with its OTLP receiver, a Thanos Sidecar and a Thanos Querier. |
 | [victoria](victoria/) | Two single-node VictoriaMetrics, two vmagents writing to both, and two vmauths as the write and query entry points; on one host, or on two VMs with [victoria/vm](victoria/vm/). |
 
-Both keep the metric names collectors send, which ai-o11y's metric catalog
-queries. On one host, each directory is used the same way:
+Both store Prometheus names (`system_cpu_time_seconds_total`), which ai-o11y's
+metric catalog queries. On one host, each directory is used the same way:
 
 ```sh
 cp .env.example .env   # adjust if needed; .env is git-ignored

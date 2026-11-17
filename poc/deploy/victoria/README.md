@@ -33,9 +33,8 @@ Each collector reads the writer's password from `AIO11Y_WRITE_PASSWORD` in its
 own environment; ai-o11y never holds it. A collector started without it runs,
 but every write is refused (401).
 
-VictoriaMetrics keeps the names collectors send (`system.cpu.time`), the names
-ai-o11y's metric catalog queries; `-opentelemetry.usePrometheusNaming` must
-stay off, its default. Each storage deduplicates the two copies a vmagent
+vmagent stores Prometheus names (`system_cpu_time_seconds_total`), the names
+ai-o11y's metric catalog queries, with `-opentelemetry.usePrometheusNaming`. Each storage deduplicates the two copies a vmagent
 failover may write (`-dedup.minScrapeInterval`, the collection interval).
 
 ## On one host (docker compose)
