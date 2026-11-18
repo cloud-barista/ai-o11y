@@ -139,7 +139,10 @@ type output struct {
 // documentation sets them up: the exporters' queues and retries are off, so a
 // failure reaches the connector, which then moves to the next endpoint and
 // goes back to the first once it answers again. While every endpoint fails,
-// nothing is kept.
+// nothing is kept. The connector tries the endpoints again only every
+// retry_interval (10m by default), so it is set to one collection interval:
+// when every endpoint fails at once, sending resumes within one interval of
+// one coming back rather than up to ten minutes later.
 func exportTo(endpoints []monitoring.Endpoint) output {
 	if len(endpoints) == 1 {
 		out := output{head: ExporterOTLPHTTP, extensions: map[string]any{}}
@@ -161,7 +164,10 @@ func exportTo(endpoints []monitoring.Endpoint) output {
 		}
 		levels = append(levels, []string{pipeline})
 	}
-	out.connectors = map[string]any{ConnectorFailover: map[string]any{"priority_levels": levels}}
+	out.connectors = map[string]any{ConnectorFailover: map[string]any{
+		"priority_levels": levels,
+		"retry_interval":  DefaultInterval.String(),
+	}}
 	return out
 }
 

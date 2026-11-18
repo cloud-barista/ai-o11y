@@ -11,9 +11,9 @@ Each backend has its own directory, with `single/` for everything on one host
 | Directory | Backend (`AIO11Y_BACKEND_PROVIDER`) | What | single | distributed |
 |---|---|---|---|---|
 | [thanos-sidecar](thanos-sidecar/) | thanos | Prometheus with its OTLP receiver, a Thanos Sidecar and a Thanos Querier. | ✓ | |
-| [thanos-receive](thanos-receive/) | thanos | Three Thanos Receives keeping two copies of every sample, a Querier, a Store Gateway and a Compactor, blocks in [storage/seaweedfs](storage/seaweedfs/). | ✓ | |
+| [thanos-receive](thanos-receive/) | thanos | Three Thanos Receives keeping two copies of every sample, a Querier, a Store Gateway and a Compactor, blocks in [storage/seaweedfs](storage/seaweedfs/). | ✓ | ✓ (3 VMs) |
 | [victoria-single](victoria-single/) | victoria | Two single-node VictoriaMetrics, two vmagents writing to both, and two vmauths as the write and query entry points. | ✓ | ✓ (systemd) |
-| [storage/seaweedfs](storage/seaweedfs/) | | SeaweedFS with an S3 gateway, the object storage of the Thanos samples. | ✓ | |
+| [storage/seaweedfs](storage/seaweedfs/) | | SeaweedFS with an S3 gateway, the object storage of the Thanos samples. | ✓ | ✓ (3 VMs) |
 
 Each stores Prometheus names (`system_cpu_time_seconds_total`), which ai-o11y's
 metric catalog queries. Every `single/` directory is used the same way:
@@ -24,3 +24,6 @@ cp .env.example .env   # adjust if needed; .env is git-ignored
 docker compose up -d
 docker compose down -v # stop and remove the data volumes
 ```
+
+A `distributed/` directory runs the same file on every machine, each with its
+own `.env`; its README lists the steps.

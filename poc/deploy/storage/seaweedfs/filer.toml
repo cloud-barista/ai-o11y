@@ -1,8 +1,8 @@
 # SeaweedFS filer metadata store: the MariaDB every filer shares, so any filer
 # serves any file. Replaces the image's own filer.toml (a local leveldb2, which
 # only the filer that wrote it could read). The connection comes from the
-# environment (WEED_MYSQL2_HOSTNAME, _USERNAME, _PASSWORD, _DATABASE in
-# compose.yaml), which overrides the values here.
+# environment (WEED_MYSQL2_HOSTNAME, _USERNAME, _PASSWORD, _DATABASE in the
+# single/ and distributed/ compose files), which overrides the values here.
 [mysql2]
 enabled = true
 createTable = """

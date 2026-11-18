@@ -3,6 +3,7 @@ connectors:
         priority_levels:
             - - metrics/0
             - - metrics/1
+        retry_interval: 30s
 exporters:
     otlp_http/0:
         auth:

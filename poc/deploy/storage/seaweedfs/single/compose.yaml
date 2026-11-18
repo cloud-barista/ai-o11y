@@ -13,7 +13,8 @@ x-seaweedfs: &seaweedfs
   restart: unless-stopped
 
 # The masters elect a leader by Raft, so three keep one up through the loss of
-# any one. New volumes get SEAWEEDFS_REPLICATION.
+# any one. New volumes get SEAWEEDFS_REPLICATION; the leader restores missing
+# copies (../master.toml).
 x-master: &master
   <<: *seaweedfs
 
@@ -24,7 +25,7 @@ x-volume: &volume
   depends_on: [master-1, master-2, master-3]
 
 # A filer with its S3 gateway. Every filer keeps its metadata in the shared
-# MariaDB (filer.toml), so each one serves every file.
+# MariaDB (../filer.toml), so each one serves every file.
 x-filer: &filer
   <<: *seaweedfs
   environment:
@@ -35,7 +36,7 @@ x-filer: &filer
     AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
     AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
   volumes:
-    - ./filer.toml:/etc/seaweedfs/filer.toml:ro
+    - ../filer.toml:/etc/seaweedfs/filer.toml:ro
   depends_on:
     mariadb: {condition: service_healthy}
     master-1: {condition: service_started}
@@ -66,7 +67,7 @@ services:
       - -peers=master-1:9333,master-2:9333,master-3:9333
       - -defaultReplication=${SEAWEEDFS_REPLICATION}
       - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
-    volumes: [master-1:/data]
+    volumes: [master-1:/data, ../master.toml:/etc/seaweedfs/master.toml:ro]
   master-2:
     <<: *master
     command:
@@ -77,7 +78,7 @@ services:
       - -peers=master-1:9333,master-2:9333,master-3:9333
       - -defaultReplication=${SEAWEEDFS_REPLICATION}
       - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
-    volumes: [master-2:/data]
+    volumes: [master-2:/data, ../master.toml:/etc/seaweedfs/master.toml:ro]
   master-3:
     <<: *master
     command:
@@ -88,7 +89,7 @@ services:
       - -peers=master-1:9333,master-2:9333,master-3:9333
       - -defaultReplication=${SEAWEEDFS_REPLICATION}
       - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
-    volumes: [master-3:/data]
+    volumes: [master-3:/data, ../master.toml:/etc/seaweedfs/master.toml:ro]
 
   volume-1:
     <<: *volume

@@ -12,7 +12,7 @@ ai-o11y ──▶ Querier ◀─────────┘◀──── Store
                                      Compactor (one) ◀───────────┘
 ```
 
-ai-o11y settings:
+ai-o11y settings (single/; distributed/ below):
 
 ```sh
 AIO11Y_BACKEND_PROVIDER=thanos
@@ -42,3 +42,45 @@ container on one machine, which is still a single point of failure.
 [storage/seaweedfs/single](../storage/seaweedfs/single/) with it; one
 [single/.env.example](single/.env.example) holds the settings of both. The
 Querier listens on port 10902 and the Receives on 19291 to 19293 by default.
+
+## Over three VMs: [distributed/](distributed/)
+
+A Receive and the SeaweedFS parts on every VM; a Querier and a Store Gateway
+on two, the Compactor and the MariaDB on one each, picked by
+`COMPOSE_PROFILES`. Any one VM may be down: writes, queries and uploads go on.
+
+| VM | `COMPOSE_PROFILES` | Runs |
+|---|---|---|
+| VM1 | `query,compact` | Receive, Querier, Store Gateway, Compactor |
+| VM2 | `query` | Receive, Querier, Store Gateway |
+| VM3 | `db` | Receive, MariaDB |
+
+[distributed/compose.yaml](distributed/compose.yaml) starts the SeaweedFS
+cluster of [storage/seaweedfs/distributed](../storage/seaweedfs/distributed/)
+with it. On every VM:
+
+```sh
+cd thanos-receive/distributed
+cp .env.example .env   # set SELF_ADDR, the VM addresses and COMPOSE_PROFILES
+docker compose up -d
+```
+
+Every part listens on the VM's own address (`SELF_ADDR`, host networking), so
+the VMs must reach one another on these ports, besides the SeaweedFS ones:
+
+| Port | Part |
+|---|---|
+| 19291 | Receive: OTLP and remote write (collectors) |
+| 10901, 10902 | Receive (gRPC: Queriers and the other Receives; HTTP) |
+| 19391 | Receive: copies between Receives |
+| 10903, 10904 | Querier (gRPC; HTTP: ai-o11y) |
+| 10905, 10906 | Store Gateway (gRPC, HTTP) |
+| 10912 | Compactor (HTTP) |
+
+ai-o11y settings:
+
+```sh
+AIO11Y_BACKEND_PROVIDER=thanos
+AIO11Y_BACKEND_QUERY_URL=http://<VM1>:10904,http://<VM2>:10904
+AIO11Y_BACKEND_WRITE_URL=http://<VM1>:19291/api/v1/otlp,http://<VM2>:19291/api/v1/otlp,http://<VM3>:19291/api/v1/otlp
+```
