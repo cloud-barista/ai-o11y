@@ -18,6 +18,9 @@
 #   --binary PATH       collector binary to install
 #   --binary-url URL    collector binary to download
 #                       (neither: keep the installed binary)
+#   --gpm-binary PATH   aio11y-gpm, the helper the NVIDIA GPU receiver runs to
+#                       read NVML GPM (MIG SM utilization), to install next to
+#                       the collector (not given: keep the installed one, if any)
 #   --config-only       fetch the configuration of the installed target and
 #                       restart; no registration, binary or unit change
 #
@@ -32,10 +35,10 @@
 # description, and replaces the binary, configuration and unit.
 set -euo pipefail
 
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "install.sh: $*" >&2; exit 1; }
 
-server='' ns='' infra='' node='' binary='' binary_url='' config_only=false
+server='' ns='' infra='' node='' binary='' binary_url='' gpm_binary='' config_only=false
 while (($#)); do
   case $1 in
     --server) server=${2:?--server needs a value}; shift ;;
@@ -44,6 +47,7 @@ while (($#)); do
     --node) node=${2:?--node needs a value}; shift ;;
     --binary) binary=${2:?--binary needs a value}; shift ;;
     --binary-url) binary_url=${2:?--binary-url needs a value}; shift ;;
+    --gpm-binary) gpm_binary=${2:?--gpm-binary needs a value}; shift ;;
     --config-only) config_only=true ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; die "unknown argument: $1" ;;
@@ -63,6 +67,8 @@ env_file=$etc_dir/env
 id_file=$etc_dir/target-id
 server_file=$etc_dir/server
 bin_path=$root/usr/local/bin/aio11y-otelcol
+# The NVIDIA GPU receiver looks for aio11y-gpm next to the collector first.
+gpm_path=$root/usr/local/bin/aio11y-gpm
 unit=aio11y-otelcol
 unit_path=$root/etc/systemd/system/$unit.service
 # AIO11Y_SETTLE_SECONDS is how long a restarted collector runs before it must
@@ -73,7 +79,7 @@ ident='^[A-Za-z0-9._-]+$'
 [[ -n $binary && -n $binary_url ]] && die "give --binary or --binary-url, not both"
 if $config_only; then
   [[ -f $unit_path && -f $id_file ]] || die "not installed: run install.sh without --config-only first"
-  [[ -z $binary && -z $binary_url ]] || die "--config-only keeps the installed binary"
+  [[ -z $binary && -z $binary_url && -z $gpm_binary ]] || die "--config-only keeps the installed binaries"
 else
   for v in ns infra node; do
     [[ -n ${!v} ]] || die "--$v is required"
@@ -82,6 +88,7 @@ else
   [[ -f $here/$unit.service ]] || die "$here/$unit.service is missing: run install.sh from its directory"
   [[ -n $binary || -n $binary_url || -x $bin_path ]] || die "--binary or --binary-url is required"
   [[ -z $binary || -f $binary ]] || die "$binary is not a file"
+  [[ -z $gpm_binary || -f $gpm_binary ]] || die "$gpm_binary is not a file"
 fi
 [[ -n $server || ! -f $server_file ]] || server=$(<"$server_file")
 [[ -n $server ]] || die "--server is required"
@@ -94,7 +101,8 @@ umask 077
 work=$(mktemp -d)
 staged_bin=$bin_path.new
 staged_config=$config.new
-trap 'rm -rf "$work"; rm -f "$staged_bin" "$staged_config" "$env_file.new"' EXIT
+staged_gpm=$gpm_path.new
+trap 'rm -rf "$work"; rm -f "$staged_bin" "$staged_gpm" "$staged_config" "$env_file.new"' EXIT
 
 # The token goes to curl in a header file so it is not in curl's arguments.
 auth=()
@@ -132,6 +140,10 @@ elif [[ -n $binary_url ]]; then
   run_bin=$staged_bin
 fi
 chmod 0755 "$run_bin"
+if [[ -n $gpm_binary ]]; then
+  cp "$gpm_binary" "$staged_gpm"
+  chmod 0755 "$staged_gpm"
+fi
 api -o "$staged_config" "$server/aio11y/targets/$id/collectorConfig" ||
   die "fetching the collector configuration of $id failed"
 chmod 0640 "$staged_config"
@@ -141,6 +153,9 @@ chmod 0640 "$staged_config"
 # 3. Install. Renames, so a running collector never reads a half-written file.
 if [[ $run_bin == "$staged_bin" ]]; then
   mv -f "$staged_bin" "$bin_path"
+fi
+if [[ -n $gpm_binary ]]; then
+  mv -f "$staged_gpm" "$gpm_path"
 fi
 mv -f "$staged_config" "$config"
 if [[ -n ${AIO11Y_WRITE_PASSWORD:-} ]]; then

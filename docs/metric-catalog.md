@@ -62,6 +62,8 @@ GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpur
 
 The NVIDIA GPU receiver also counts the XID errors the NVIDIA driver logs to the kernel log (`NVRM: Xid (PCI:0000:3b:00): 79, ...`), reading `/dev/kmsg`, as `nvidia_kmsg.xid.errors`: a cumulative count since boot with the XID number in `xid` and the GPU's `uuid`, found by matching the line's PCI address to `nvidia-smi`'s `pci.bus_id`. A line whose address `nvidia-smi` did not name keeps the address as written in `pci.bus_id` instead. The count goes as far back as the kernel's log buffer holds, and a collector that restarts counts the same lines again. `nvidia_kmsg:xid.errors` adds up the XID numbers per GPU; a GPU with no XID has no series rather than 0.
 
+With `gpm` on, which ai-o11y renders for every NVIDIA VM, the NVIDIA GPU receiver also runs its helper `aio11y-gpm` (`otelcol/cmd/aio11y-gpm`) each collection to read NVML GPM, which only Hopper and later GPUs have, and writes each GPM value as `nvml.<field>` in percent (`nvml.gpm.sm.utilization`, ...): one point per GPU with the GPU's `index`, `uuid` and `name`, and one per MIG instance that adds `mig` `"true"`, `gpu_instance_id` and, when NVML gives it, `mig.uuid`. Where the helper is not installed or the GPU has no GPM, these are left out and the rest is collected. `nvml:mig.sm.utilization` is `nvml.gpm.sm.utilization` of the MIG instance points divided by 100, split within a target by the GPU's `uuid` and `gpu_instance_id`; `within` collapses the GPU instances of each GPU. It has not been checked on a GPU that has GPM yet.
+
 The AMD GPU receiver writes these, leaving out a value amd-smi gives as `N/A` or in another unit (amd-smi's `MB` is MiB):
 
 | Metric | Unit |
@@ -149,7 +151,7 @@ The AMD GPU receiver writes these, leaving out a value amd-smi gives as `N/A` or
 | `ecc.total_uncorrectable_count` | amd_smi | {error} |  | `uuid` | yes |
 | `ecc.total_deferred_count` | amd_smi | {error} |  | `uuid` | yes |
 | `xid.errors` | nvidia_kmsg | {error} |  | `uuid` | yes |
-| `mig.sm.utilization` | nvml | 1 |  |  | no: the GPU receiver has no NVML source yet; nvidia-smi does not report it |
+| `mig.sm.utilization` | nvml | 1 |  | `gpu_instance_id` | yes |
 
 ## Known limits
 
@@ -158,10 +160,11 @@ The AMD GPU receiver writes these, leaving out a value amd-smi gives as `N/A` or
 - The meaning of a common field follows OpenTelemetry. Where it differs from
   the fields shown by existing screens (for example, CPU user time with or
   without guest time), the difference is not reconciled yet.
-- The NVIDIA GPU receiver has only an `nvidia-smi` source: MIG fields wait for
-  an NVML source. XID errors are counted from the kernel log, so XIDs the
-  kernel's log buffer no longer holds are not counted. GPUs of vendors other
-  than NVIDIA and AMD are not read.
+- The NVIDIA GPU receiver reads `nvidia-smi`, and NVML only for GPM through
+  `aio11y-gpm`: MIG SM utilization needs a Hopper or later GPU and that
+  helper installed, and has not been checked on such a GPU yet. XID errors are
+  counted from the kernel log, so XIDs the kernel's log buffer no longer holds
+  are not counted. GPUs of vendors other than NVIDIA and AMD are not read.
 - The common GPU fields (`hw.gpu.*`, `hw.power`) are computed from `nvidia-smi`
   only: a query renders one collector's expression per field, so AMD GPUs give
   their `amd_smi` fields alone until it can combine two.

@@ -39,6 +39,7 @@ EOF
 sed 's/FAKE_BUILD/local/' "$here/fake-otelcol" >"$tmp/otelcol-local"
 sed 's/FAKE_BUILD/download/' "$here/fake-otelcol" >"$tmp/otelcol-download"
 chmod 0755 "$tmp/otelcol-local" "$tmp/otelcol-download"
+printf '#!/bin/sh\necho gpm helper\n' >"$tmp/aio11y-gpm"
 
 python3 -I "$here/fake_server.py" "$tmp/port" &
 server_pid=$!
@@ -51,6 +52,7 @@ url=http://localhost:$(<"$tmp/port")
 
 etc=$AIO11Y_ROOT/etc/aio11y-otelcol
 bin=$AIO11Y_ROOT/usr/local/bin/aio11y-otelcol
+gpm=$AIO11Y_ROOT/usr/local/bin/aio11y-gpm
 unit=$AIO11Y_ROOT/etc/systemd/system/aio11y-otelcol.service
 # A password systemd would read wrongly without the escapes.
 password='p"a\s$s`w o#rd'"'"'x'
@@ -84,7 +86,8 @@ reset_logs() { rm -f "$FAKE_LOG/systemctl.log" "$FAKE_LOG/curl.log" "$FAKE_LOG/s
 
 echo "-- install"
 check "install succeeds" run env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN AIO11Y_WRITE_PASSWORD="$password" \
-  "$scripts/install.sh" --server "$url/" --ns ns01 --infra infra01 --node node01 --binary "$tmp/otelcol-local"
+  "$scripts/install.sh" --server "$url/" --ns ns01 --infra infra01 --node node01 --binary "$tmp/otelcol-local" \
+  --gpm-binary "$tmp/aio11y-gpm"
 check "registers kind node by nsId/infraId/nodeId with the token" \
   has "$FAKE_LOG/server.log" "POST /aio11y/targets auth=Bearer $FAKE_TOKEN {\"kind\":\"node\",\"nsId\":\"ns01\",\"infraId\":\"infra01\",\"nodeId\":\"node01\"}"
 check "fetches the configuration of the answered id" \
@@ -98,6 +101,8 @@ check "target-id is the answered id" [ "$(<"$etc/target-id")" == uid-node01 ]
 check "server is saved without the trailing slash" [ "$(<"$etc/server")" == "$url" ]
 check "binary is the given one" has "$bin" "build: local"
 check "binary is 0755" mode "$bin" 755
+check "GPM helper is the given one, next to the collector" cmp -s "$tmp/aio11y-gpm" "$gpm"
+check "GPM helper is 0755" mode "$gpm" 755
 check "unit is installed" cmp -s "$scripts/aio11y-otelcol.service" "$unit"
 check "configuration validated before install" has "$FAKE_LOG/otelcol.log" "validate $etc/config.yaml.new"
 check "systemctl: daemon-reload, enable, restart, is-active in order" \
@@ -108,7 +113,7 @@ check "every curl call has --fail and --max-time" \
 check "the token is not in curl's arguments" lacks "$FAKE_LOG/curl.log" "$FAKE_TOKEN"
 check "the password is not printed" lacks "$tmp/out" 'w o#rd'
 check "reports active" has "$tmp/out" "aio11y-otelcol is active (target uid-node01)"
-check "no staged file left" bash -c '! ls "$1"/*.new "$2".new 2>/dev/null' _ "$etc" "$bin"
+check "no staged file left" bash -c '! ls "$1"/*.new "$2".new "$3".new 2>/dev/null' _ "$etc" "$bin" "$gpm"
 
 echo "-- reinstall from a URL, password not given"
 reset_logs
@@ -118,6 +123,7 @@ check "reinstall succeeds" run env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN \
 check "registers again" count "$FAKE_LOG/server.log" "POST /aio11y/targets" 1
 check "binary is the downloaded one" has "$bin" "build: download"
 check "env is kept" [ "$(<"$etc/env")" == "$env_before" ]
+check "GPM helper is kept" cmp -s "$tmp/aio11y-gpm" "$gpm"
 check "restarts the running collector" has "$FAKE_LOG/systemctl.log" "restart aio11y-otelcol"
 
 echo "-- reinstall keeping the installed binary, server from the saved file"
@@ -132,6 +138,7 @@ reset_logs
 printf '# second\n' >>"$FAKE_CONFIG"
 check "config-only succeeds" run env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN "$scripts/install.sh" --config-only
 check "does not register" lacks "$FAKE_LOG/server.log" "POST"
+check "GPM helper is still installed" present "$gpm"
 check "fetches the configuration again" cmp -s "$FAKE_CONFIG" "$etc/config.yaml"
 check "only restarts" \
   diff <(printf '%s\n' 'restart aio11y-otelcol' 'is-active --quiet aio11y-otelcol') "$FAKE_LOG/systemctl.log"
@@ -153,6 +160,11 @@ check "wrong token fails" fails env AIO11Y_AUTH_TOKEN=wrong \
   "$scripts/install.sh" --server "$url" --ns ns01 --infra infra01 --node node02 --binary "$tmp/otelcol-local"
 check "wrong token: says registration failed" has "$tmp/out" "registering ns01/infra01/node02"
 check "wrong token: binary is not replaced" has "$bin" "build: download"
+check "config-only refuses a GPM helper" fails "$scripts/install.sh" --config-only --gpm-binary "$tmp/aio11y-gpm"
+check "config-only refuses a GPM helper: says why" has "$tmp/out" "--config-only keeps the installed binaries"
+check "a GPM helper that is not a file is refused" fails \
+  "$scripts/install.sh" --server "$url" --ns ns01 --infra infra01 --node node01 --gpm-binary "$tmp/missing"
+check "a GPM helper that is not a file: says why" has "$tmp/out" "$tmp/missing is not a file"
 check "an id with a quote is refused" fails \
   "$scripts/install.sh" --server "$url" --ns 'ns"01' --infra infra01 --node node01
 check "a service that does not stay up fails" fails env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN FAKE_ACTIVE=failed \
@@ -169,6 +181,7 @@ check "systemctl: disable --now, daemon-reload" \
   diff <(printf '%s\n' 'disable --now aio11y-otelcol' daemon-reload) "$FAKE_LOG/systemctl.log"
 check "removes the configuration directory" absent "$etc"
 check "removes the binary" absent "$bin"
+check "removes the GPM helper" absent "$gpm"
 check "removes the unit" absent "$unit"
 check "removes the state directory" absent "$AIO11Y_ROOT/var/lib/aio11y-otelcol"
 check "the token is not in curl's arguments" lacks "$FAKE_LOG/curl.log" "$FAKE_TOKEN"

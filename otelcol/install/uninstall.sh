@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Removes the ai-o11y collector that install.sh installed: stops and deletes
-# the aio11y-otelcol service, its binary, configuration and disk queue.
+# the aio11y-otelcol service, its binaries, configuration and disk queue.
 #
 #   sudo ./uninstall.sh
 #   sudo --preserve-env=AIO11Y_AUTH_TOKEN ./uninstall.sh --deregister
@@ -37,6 +37,7 @@ etc_dir=$root/etc/aio11y-otelcol
 id_file=$etc_dir/target-id
 server_file=$etc_dir/server
 bin_path=$root/usr/local/bin/aio11y-otelcol
+gpm_path=$root/usr/local/bin/aio11y-gpm
 state_dir=$root/var/lib/aio11y-otelcol
 unit=aio11y-otelcol
 unit_path=$root/etc/systemd/system/$unit.service
@@ -72,7 +73,7 @@ if [[ -f $unit_path ]]; then
   rm -f "$unit_path"
   systemctl daemon-reload
 fi
-rm -f "$bin_path" "$etc_dir/config.yaml" "$etc_dir/env" "$id_file" "$server_file"
+rm -f "$bin_path" "$gpm_path" "$etc_dir/config.yaml" "$etc_dir/env" "$id_file" "$server_file"
 if [[ -d $etc_dir ]]; then
   rmdir "$etc_dir" || echo "warning: $etc_dir holds other files; left in place" >&2
 fi

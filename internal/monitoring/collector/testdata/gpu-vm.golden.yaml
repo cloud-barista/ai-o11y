@@ -68,6 +68,8 @@ receivers:
             system: {}
     nvidia_gpu:
         collection_interval: 30s
+        gpm:
+            enabled: true
         source: nvidia_smi
         xid:
             enabled: true

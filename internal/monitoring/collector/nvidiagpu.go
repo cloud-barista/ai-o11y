@@ -15,7 +15,11 @@ const NvidiaGPUReceiver = "nvidia_gpu"
 
 // NvidiaGPU renders the NVIDIA GPU receiver, reading nvidia-smi, for a VM with
 // GPUs. It also counts the XID errors the driver logs to the kernel log
-// (/dev/kmsg), which the collector can read since it runs as root.
+// (/dev/kmsg), which the collector can read since it runs as root, and reads
+// NVML GPM (SM utilization per MIG instance) through the aio11y-gpm helper.
+// GPM is turned on for every NVIDIA VM: where the helper is not installed or
+// the GPU has no GPM (older than Hopper), the receiver leaves it out and
+// collects the rest.
 type NvidiaGPU struct {
 	Interval time.Duration
 }
@@ -57,6 +61,7 @@ func (g NvidiaGPU) Render(monitoring.Target, monitoring.MetricCatalog) (monitori
 				"collection_interval": interval.String(),
 				"source":              catalog.CollectorNvidiaSMI,
 				"xid":                 map[string]any{"enabled": true},
+				"gpm":                 map[string]any{"enabled": true},
 			},
 		},
 	}, nil

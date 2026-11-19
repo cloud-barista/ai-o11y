@@ -1,10 +1,13 @@
 package catalog
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/prometheus/promql/parser"
+	"github.com/prometheus/prometheus/promql/promqltest"
 
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
 )
@@ -110,5 +113,61 @@ func TestNewRejects(t *testing.T) {
 	own.Schema = "hostmetrics"
 	if _, err := New([]monitoring.MetricRow{ok, own}); err != nil {
 		t.Errorf("a common field and a collector's own field may share a name: %v", err)
+	}
+}
+
+// TestMIGSMUtilization runs nvml:mig.sm.utilization on series as the
+// nvidia_gpu receiver writes nvml.gpm.sm.utilization: a device point and MIG
+// instance points with mig "true", two GPUs each with a GPU instance 1, one
+// MIG instance NVML gave no MIG UUID.
+func TestMIGSMUtilization(t *testing.T) {
+	c, err := New(Builtin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := c.Lookup(SchemaNVML + ":mig.sm.utilization")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Gap != "" || len(row.Exprs) != 1 || row.Exprs[CollectorNvidiaSMI] == "" {
+		t.Fatalf("row = %+v, want one nvidia_smi expression and no gap", row)
+	}
+	st := promqltest.LoadedStorage(t, `load 30s
+  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-1",index="0"} 90x10
+  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-1",index="0",mig="true",gpu_instance_id="1","mig.uuid"="MIG-11"} 40x10
+  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-1",index="0",mig="true",gpu_instance_id="2","mig.uuid"="MIG-12"} 12.5x10
+  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-2",index="1",mig="true",gpu_instance_id="1"} 70x10
+  {__name__="nvml.gpm.sm.utilization",entity_id="b",uuid="GPU-3",index="0",mig="true",gpu_instance_id="1","mig.uuid"="MIG-31"} 5x10
+`)
+	t.Cleanup(func() { _ = st.Close() })
+	expr := strings.ReplaceAll(row.Exprs[CollectorNvidiaSMI], monitoring.PlaceholderSelector, `entity_id="a"`)
+	engine := promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000)
+	q, err := engine.NewInstantQuery(context.Background(), st, nil, expr, time.Unix(0, 0).Add(4*time.Minute))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, expr)
+	}
+	res := q.Exec(context.Background())
+	if res.Err != nil {
+		t.Fatal(res.Err)
+	}
+	vec, err := res.Vector()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]float64{}
+	for _, s := range vec {
+		if s.Metric.Get("entity_id") != "a" {
+			t.Errorf("series of another target: %v", s.Metric)
+		}
+		got[s.Metric.Get("uuid")+"/"+s.Metric.Get(row.Dimension)] = s.F
+	}
+	want := map[string]float64{"GPU-1/1": 0.4, "GPU-1/2": 0.125, "GPU-2/1": 0.7}
+	if len(got) != len(want) {
+		t.Fatalf("mig.sm.utilization = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok || g != v {
+			t.Errorf("mig.sm.utilization[%s] = %v, want %v", k, g, v)
+		}
 	}
 }

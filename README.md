@@ -28,6 +28,7 @@ CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / V
 | `internal/monitoring/backend` | Prometheus query API client and the Thanos and VictoriaMetrics backends, selected by `AIO11Y_BACKEND`. |
 | `internal/monitoring/collector` | Renders the collector configuration of a target. |
 | `otelcol/` | The collector, built with the OpenTelemetry Collector Builder, and its own components (`otelcol/receiver/nvidiagpureceiver`, `otelcol/receiver/amdgpureceiver`). Not part of the service's Go module. |
+| `otelcol/cmd/aio11y-gpm` | Helper the NVIDIA GPU receiver runs to read NVML GPM (SM utilization per MIG instance); a separate executable because opening NVML links libc and the collector stays static. |
 
 ## Build and run
 
@@ -37,9 +38,9 @@ make test
 make lint
 make swag             # api/docs from the handlers' godoc
 
-make otelcol          # otelcol/_build/aio11y-otelcol (static, linux/amd64)
+make otelcol          # otelcol/_build/aio11y-otelcol (static, linux/amd64) and aio11y-gpm
 make otelcol-validate # render a target's configuration and validate it with the collector
-make -C otelcol test  # tests of the collector's own components and install scripts
+make -C otelcol test  # tests of the collector's own components, its helpers and install scripts
 ```
 
 To run the collector on a VM, [otelcol/install](otelcol/install/README.md)
@@ -84,7 +85,10 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   most CPU and the 10 using the most memory in each collection, added up by
   executable name.
 - **GPU**: NVIDIA GPUs are read with `nvidia-smi` and AMD GPUs with `amd-smi`;
-  other vendors are not read. MIG fields wait for an NVML source. XID errors
+  other vendors are not read. SM utilization per MIG instance comes from NVML
+  GPM, which only Hopper and later GPUs have, through the helper `aio11y-gpm`
+  installed next to the collector; without either it is left out. It has not
+  been checked on a GPU with GPM yet, only with a fake NVML. XID errors
   are counted from the kernel log (`/dev/kmsg`) since boot, as far back as its
   buffer holds. AMD GPUs give only amd-smi's own fields yet: the common
   `hw.gpu.*` fields and

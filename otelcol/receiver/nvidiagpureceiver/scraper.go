@@ -2,8 +2,10 @@ package nvidiagpureceiver
 
 import (
 	"context"
+	"sync"
 	"time"
 
+	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/scraper/scrapererror"
@@ -13,21 +15,51 @@ import (
 // It is named after where it comes from, the kernel log, not nvidia-smi.
 const xidMetric = "nvidia_kmsg.xid.errors"
 
-// gpuScraper turns a source's samples into gauges named namespace.field, and
-// the XIDs counted, when it counts them, into xidMetric.
+// gpuScraper turns a source's samples into gauges named namespace.field, the
+// XIDs counted, when it counts them, into xidMetric, and the GPM values, when
+// it reads them, into nvml.<field>.
 type gpuScraper struct {
 	source Source
 	now    func() time.Time
 	// xid counts XID lines; nil when XIDs are not counted.
 	xid *xidCounter
+	// gpm reads NVML GPM through aio11y-gpm; nil when GPM is not read.
+	gpm *gpmReader
 	// uuids maps the PCI addresses of the GPUs last read to their uuid.
 	uuids map[pciKey]string
 }
 
+// start starts XID counting and finds the GPM helper, when they are on.
+func (s *gpuScraper) start(ctx context.Context, host component.Host) error {
+	if s.xid != nil {
+		if err := s.xid.Start(ctx, host); err != nil {
+			return err
+		}
+	}
+	if s.gpm != nil {
+		return s.gpm.Start(ctx, host)
+	}
+	return nil
+}
+
+func (s *gpuScraper) shutdown(ctx context.Context) error {
+	if s.xid != nil {
+		return s.xid.Shutdown(ctx)
+	}
+	return nil
+}
+
 func (s *gpuScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
 	md := pmetric.NewMetrics()
+	// GPM waits a sample interval, so it runs alongside the source.
+	var gpmResults []gpmResult
+	var wg sync.WaitGroup
+	if s.gpm != nil {
+		wg.Go(func() { gpmResults = s.gpm.Read(ctx) })
+	}
 	gpus, err := s.source.Read(ctx)
-	if err != nil && s.xid == nil {
+	wg.Wait()
+	if err != nil && s.xid == nil && len(gpmResults) == 0 {
 		return md, err
 	}
 	ts := pcommon.NewTimestampFromTime(s.now())
@@ -56,6 +88,7 @@ func (s *gpuScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
 			}
 		}
 	}
+	appendGPM(sm, ts, gpmResults, gpus)
 	// XIDs are reported even when the source fails: a GPU fallen off the bus
 	// (XID 79) is when nvidia-smi fails.
 	s.appendXID(sm, ts)

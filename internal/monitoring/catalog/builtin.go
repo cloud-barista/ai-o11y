@@ -20,9 +20,6 @@ const (
 	// CollectorAMDSMI is the amd_gpu receiver built into the collector,
 	// reading amd-smi metric --json; it writes amd_smi.<path in the JSON>.
 	CollectorAMDSMI = "amd_smi"
-	// CollectorNVML is the NVML source the nvidia_gpu receiver does not have
-	// yet; fields only it can give name it.
-	CollectorNVML = "nvml"
 )
 
 // SchemaNvidiaKmsg names the fields the nvidia_gpu receiver counts from the
@@ -30,6 +27,12 @@ const (
 // nvidia_kmsg.<field>. Their expressions are the nvidia_smi collector's, the
 // receiver that writes them.
 const SchemaNvidiaKmsg = "nvidia_kmsg"
+
+// SchemaNVML names the fields the nvidia_gpu receiver reads from NVML, through
+// its helper aio11y-gpm, rather than from nvidia-smi; it writes them as
+// nvml.<field>. Their expressions are the nvidia_smi collector's, the
+// receiver that writes them.
+const SchemaNVML = "nvml"
 
 // Capabilities a row can require.
 const (
@@ -477,11 +480,18 @@ func gpuRows() []monitoring.MetricRow {
 		Dimension: dim, DimensionName: dim,
 	})
 
-	// NVIDIA fields only NVML gives; the receiver has no NVML source yet.
-	const nvml = "the GPU receiver has no NVML source yet; nvidia-smi does not report it"
-	rows = append(rows,
-		monitoring.MetricRow{Name: "mig.sm.utilization", Schema: CollectorNVML, Area: "gpu", Unit: "1",
-			Kind: monitoring.KindGauge, Description: "SM activity of a MIG instance.", Gap: nvml},
-	)
+	// SM utilization per MIG instance, which only NVML GPM gives. The receiver
+	// writes GPM in percent for the whole GPU and for each MIG instance, the
+	// latter with mig "true" and the GPU instance id GPM sampled; the parent
+	// GPU's uuid and gpu_instance_id keep the instances apart, also when NVML
+	// gave no MIG UUID.
+	const gi = "gpu_instance_id"
+	rows = append(rows, monitoring.MetricRow{
+		Name: "mig.sm.utilization", Schema: SchemaNVML, Area: "gpu", Unit: "1", Kind: monitoring.KindGauge,
+		Description: "Share of time the SMs of a MIG instance were busy, per GPU and GPU instance (NVML GPM). " +
+			"Only Hopper and later GPUs have GPM; a GPU without it or without MIG has no series.",
+		Exprs:     smi(`max by (` + by("uuid", gi) + `) (` + series(SchemaNVML+".gpm.sm.utilization", `mig="true"`) + `) / 100`),
+		Dimension: gi, DimensionName: gi,
+	})
 	return rows
 }

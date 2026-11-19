@@ -9,6 +9,13 @@
 // kernel log (/dev/kmsg), as nvidia_kmsg.xid.errors: a cumulative count since
 // boot per GPU and XID number, the GPU found by the PCI address the line names.
 //
+// With gpm enabled it runs the helper aio11y-gpm (otelcol/cmd/aio11y-gpm) each
+// scrape to read NVML GPM, which Hopper and later GPUs have, as
+// nvml.gpm.<field> in percent: per GPU, and per MIG instance with mig "true",
+// gpu_instance_id and mig.uuid. GPM is the only source of SM utilization per
+// MIG instance. The helper opens libnvidia-ml, which links libc, so it is a
+// separate executable and the collector stays statically linked.
+//
 // Sources are swappable: nvidia-smi is the first, an NVML source can follow
 // without touching the receiver.
 package nvidiagpureceiver
