@@ -375,46 +375,60 @@ func perGPU(name string) string {
 	return `max by (entity_id, uuid) (` + series(name) + `)`
 }
 
+// gpus maps a GPU field to its nvidia-smi and its amd-smi expression.
+func gpus(nvidia, amd string) map[string]string {
+	return map[string]string{CollectorNvidiaSMI: nvidia, CollectorAMDSMI: amd}
+}
+
 // gpuRows are the GPU fields. The common ones carry the OpenTelemetry
 // hardware semantic conventions' names (hw.gpu.*, hw.power), split within a
-// target by hw.id, the GPU's UUID; the rest are nvidia-smi's own query fields
-// and amd-smi's own values.
+// target by hw.id, the GPU's UUID, and are read from nvidia-smi and amd-smi
+// alike; the rest are nvidia-smi's own query fields and amd-smi's own values.
+// Both receivers write percentages and MiB, which the common fields turn into
+// a share (unit 1) and bytes.
 func gpuRows() []monitoring.MetricRow {
 	const dim, dimName = "uuid", "hw.id"
 	task := "hw.gpu.task"
 	util := func(field string) string { return perGPU(nvidiaSMI(field)) + " / 100" }
-	byTask := func(field, value string) string {
-		return fmt.Sprintf(`label_replace(%s, %q, %q, "", "")`, util(field), task, value)
+	amdUtil := func(path string) string { return perGPU(amdSMI(path)) + " / 100" }
+	tagged := func(expr, value string) string {
+		return fmt.Sprintf(`label_replace(%s, %q, %q, "", "")`, expr, task, value)
 	}
+	byTask := func(field, value string) string { return tagged(util(field), value) }
 	const mib = " * 1048576"
 	used, total := perGPU(nvidiaSMI("memory.used")), perGPU(nvidiaSMI("memory.total"))
+	amdUsed, amdTotal := perGPU(amdSMI("mem_usage.used_vram")), perGPU(amdSMI("mem_usage.total_vram"))
 
 	rows := []monitoring.MetricRow{
 		{
 			Name: "hw.gpu.utilization", Area: "gpu", Unit: "1", Kind: monitoring.KindGauge,
-			Description: "Share of time the GPU spent on each hw.gpu.task. Without one, general work (nvidia-smi utilization.gpu).",
-			Exprs:       smi(util("utilization.gpu")),
-			Attribute:   &monitoring.Attribute{Name: "hw.gpu.task", Values: []string{"general", "encoder", "decoder"}},
-			SplitExprs: smi(`sum by (` + by("uuid", task) + `) (` + byTask("utilization.gpu", "general") + ` or ` +
-				byTask("utilization.encoder", "encoder") + ` or ` + byTask("utilization.decoder", "decoder") + `)`),
+			Description: "Share of time the GPU spent on each hw.gpu.task. Without one, general work " +
+				"(nvidia-smi utilization.gpu, amd-smi usage.gfx_activity). amd-smi gives general work only.",
+			Exprs:     gpus(util("utilization.gpu"), amdUtil("usage.gfx_activity")),
+			Attribute: &monitoring.Attribute{Name: "hw.gpu.task", Values: []string{"general", "encoder", "decoder"}},
+			SplitExprs: gpus(`sum by (`+by("uuid", task)+`) (`+byTask("utilization.gpu", "general")+` or `+
+				byTask("utilization.encoder", "encoder")+` or `+byTask("utilization.decoder", "decoder")+`)`,
+				`sum by (`+by("uuid", task)+`) (`+tagged(amdUtil("usage.gfx_activity"), "general")+`)`),
 			Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.gpu.memory.usage", Area: "gpu", Unit: "By", Kind: monitoring.KindGauge,
-			Description: "GPU memory used.", Exprs: smi(used + mib), Dimension: dim, DimensionName: dimName,
+			Description: "GPU memory used.", Exprs: gpus(used+mib, amdUsed+mib), Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.gpu.memory.limit", Area: "gpu", Unit: "By", Kind: monitoring.KindGauge,
-			Description: "Size of the GPU memory.", Exprs: smi(total + mib), Dimension: dim, DimensionName: dimName,
+			Description: "Size of the GPU memory.", Exprs: gpus(total+mib, amdTotal+mib), Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.gpu.memory.utilization", Area: "gpu", Unit: "1", Kind: monitoring.KindGauge,
-			Description: "Share of the GPU memory used.", Exprs: smi(used + " / " + total), Dimension: dim, DimensionName: dimName,
+			Description: "Share of the GPU memory used.", Exprs: gpus(used+" / "+total, amdUsed+" / "+amdTotal),
+			Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.power", Area: "gpu", Unit: "W", Kind: monitoring.KindGauge,
 			Description: "Power drawn by the GPU (hw.type gpu).",
-			Exprs:       smi(perGPU(nvidiaSMI("power.draw"))), Dimension: dim, DimensionName: dimName,
+			Exprs:       gpus(perGPU(nvidiaSMI("power.draw")), perGPU(amdSMI("power.socket_power"))),
+			Dimension:   dim, DimensionName: dimName,
 		},
 	}
 

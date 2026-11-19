@@ -3,6 +3,7 @@ package query
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -123,6 +124,14 @@ func (r PromQL) renderTopK(q monitoring.QuerySpec) (string, error) {
 
 // perTarget renders everything but the top-k: the catalog expression over the
 // targets, the window, Within and Across.
+//
+// A row several collectors provide, such as hw.gpu.utilization from nvidia-smi
+// and amd-smi, renders each collector's expression with its window and joins
+// them with or, in collector name order, before Within and Across: a target
+// reporting through either collector, or through both (one GPU of each vendor),
+// then keeps its series, and Within, Across and top-k combine them all. Joined
+// after Across, the collectors' aggregates would carry the same labels and or
+// would drop all but the first.
 func (r PromQL) perTarget(q monitoring.QuerySpec) (string, error) {
 	if r.Catalog == nil {
 		return "", errors.New("renderer has no catalog")
@@ -134,30 +143,45 @@ func (r PromQL) perTarget(q monitoring.QuerySpec) (string, error) {
 	if row.Gap != "" {
 		return "", fmt.Errorf("metric %q is not collected yet: %s", row.Name, row.Gap)
 	}
-	if len(row.Exprs) != 1 {
-		return "", fmt.Errorf("metric %q has %d expressions; the renderer cannot choose a collector yet", row.ID(), len(row.Exprs))
-	}
-	var tmpl string
-	for collector, e := range row.Exprs {
-		if tmpl, err = template(row, collector, e, q); err != nil {
+	var tmpls []string
+	for _, collector := range slices.Sorted(maps.Keys(row.Exprs)) {
+		tmpl, ok, err := template(row, collector, row.Exprs[collector], q)
+		if err != nil {
 			return "", err
 		}
+		if ok {
+			tmpls = append(tmpls, tmpl)
+		}
+	}
+	if len(tmpls) == 0 {
+		return "", fmt.Errorf("metric %q: no collector splits it by %s", row.ID(), row.Attribute.Name)
 	}
 	sel, err := selector(q.Targets)
 	if err != nil {
 		return "", err
 	}
 
-	expr, err := r.window(row, tmpl, sel, q.Window, q.Step)
-	if err != nil {
-		return "", err
+	parts := make([]string, len(tmpls))
+	for i, tmpl := range tmpls {
+		if parts[i], err = r.window(row, tmpl, sel, q.Window, q.Step); err != nil {
+			return "", err
+		}
 	}
+	expr := anyOf(parts)
 	if q.Within != nil {
-		if expr, err = within(row, expr, *q.Within); err != nil {
+		if expr, err = within(row, expr, parts, *q.Within); err != nil {
 			return "", err
 		}
 	}
 	return across(expr, q.Across, q.GroupBy)
+}
+
+// anyOf joins the collectors' expressions with or; one is left as it is.
+func anyOf(parts []string) string {
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return "(" + strings.Join(parts, ") or (") + ")"
 }
 
 // ToSeriesLabels rewrites the attribute names q uses for grouping (GroupBy,
@@ -212,49 +236,55 @@ func SeriesLabel(row monitoring.MetricRow, name string) string {
 
 // template picks the collector's expression for q: the default value, or the
 // field split by its attribute when q asks for Where or SplitBy, kept to the
-// Where value; then the zero fill when q asks for it.
-func template(row monitoring.MetricRow, collector, expr string, q monitoring.QuerySpec) (string, error) {
+// Where value; then the zero fill when q asks for it. It reports false for a
+// split the collector has no expression for: that collector does not tell
+// the attribute's values apart, and which value its default stands for is
+// the catalog's to say (with a split expression), not the renderer's to guess.
+func template(row monitoring.MetricRow, collector, expr string, q monitoring.QuerySpec) (string, bool, error) {
 	fill := row.ZeroFill[collector]
 	if !q.FillZero {
 		fill = ""
 	}
 	if len(q.Where) == 0 && len(q.SplitBy) == 0 {
 		if fill != "" {
-			return "(" + expr + ") or (" + fill + ")", nil
+			return "(" + expr + ") or (" + fill + ")", true, nil
 		}
-		return expr, nil
+		return expr, true, nil
 	}
 	if row.Attribute == nil {
-		return "", fmt.Errorf("metric %q has no attribute to split by", row.ID())
+		return "", false, fmt.Errorf("metric %q has no attribute to split by", row.ID())
 	}
 	name := row.Attribute.Name
 	for _, a := range q.SplitBy {
 		if a != name {
-			return "", fmt.Errorf("metric %q splits by %s, not %s", row.ID(), name, a)
+			return "", false, fmt.Errorf("metric %q splits by %s, not %s", row.ID(), name, a)
 		}
 	}
 	for a := range q.Where {
 		if a != name {
-			return "", fmt.Errorf("metric %q splits by %s, not %s", row.ID(), name, a)
+			return "", false, fmt.Errorf("metric %q splits by %s, not %s", row.ID(), name, a)
 		}
 	}
-	split := row.SplitExprs[collector]
-	value, ok := q.Where[name]
-	if !ok {
-		return split, nil
-	}
+	value, where := q.Where[name]
 	// Only a value the attribute is known to take goes into the expression:
 	// anything else could carry placeholders ($sel) or replacement
 	// references ($1) into it.
-	if !slices.Contains(row.Attribute.Values, value) {
-		return "", fmt.Errorf("%w: %s is not a value of %s", ErrInvalidQuery, value, name)
+	if where && !slices.Contains(row.Attribute.Values, value) {
+		return "", false, fmt.Errorf("%w: %s is not a value of %s", ErrInvalidQuery, value, name)
+	}
+	split, ok := row.SplitExprs[collector]
+	if !ok {
+		return "", false, nil
+	}
+	if !where {
+		return split, true, nil
 	}
 	keep := fmt.Sprintf(`label_replace(vector(1), %q, %q, "", "")`, name, value)
 	out := fmt.Sprintf("(%s) and on (%s) %s", split, monitoring.PromQLName(name), keep)
 	if fill != "" {
 		out = fmt.Sprintf(`(%s) or label_replace(%s, %q, %q, "", "")`, out, fill, name, value)
 	}
-	return out, nil
+	return out, true, nil
 }
 
 // window fills the placeholders and applies the time window. A rate
@@ -317,9 +347,9 @@ var aggregators = map[monitoring.AggFn]bool{
 	monitoring.AggSum: true, monitoring.AggCount: true,
 }
 
-// within collapses the row's dimension, keeping every other label the
-// expression groups by.
-func within(row monitoring.MetricRow, expr string, w monitoring.Reduce) (string, error) {
+// within collapses the row's dimension in expr, keeping every other label the
+// collectors' expressions, parts, group by; they must group by the same.
+func within(row monitoring.MetricRow, expr string, parts []string, w monitoring.Reduce) (string, error) {
 	if !aggregators[w.Fn] {
 		return "", fmt.Errorf("unknown function %q to reduce within a target", w.Fn)
 	}
@@ -329,9 +359,18 @@ func within(row monitoring.MetricRow, expr string, w monitoring.Reduce) (string,
 	if w.Label != row.Dimension {
 		return "", fmt.Errorf("metric %q splits by %q, not %q", row.Name, row.Dimension, w.Label)
 	}
-	keep, err := groupingOf(expr)
+	keep, err := groupingOf(parts[0])
 	if err != nil {
 		return "", err
+	}
+	for _, p := range parts[1:] {
+		other, err := groupingOf(p)
+		if err != nil {
+			return "", err
+		}
+		if !slices.Equal(slices.Sorted(slices.Values(keep)), slices.Sorted(slices.Values(other))) {
+			return "", fmt.Errorf("metric %q: its collectors' expressions group by %v and %v", row.Name, keep, other)
+		}
 	}
 	keep = slices.DeleteFunc(keep, func(l string) bool { return l == w.Label })
 	if !slices.Contains(keep, monitoring.LabelEntityID) {

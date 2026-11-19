@@ -90,9 +90,8 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   installed next to the collector; without either it is left out. It has not
   been checked on a GPU with GPM yet, only with a fake NVML. XID errors
   are counted from the kernel log (`/dev/kmsg`) since boot, as far back as its
-  buffer holds. AMD GPUs give only amd-smi's own fields yet: the common
-  `hw.gpu.*` fields and
-  `hw.power` have one expression per field, NVIDIA's. `amd-smi` needs root
+  buffer holds. The common `hw.gpu.*` fields and `hw.power` read both
+  vendors; amd-smi gives no encoder or decoder share. `amd-smi` needs root
   (`/dev/kfd`), and an SR-IOV virtual function such as the Radeon PRO V710 on
   Azure reports little more than VRAM use. A target's metric listing cannot
   tell which fields its particular GPU leaves empty. The GPU model and count

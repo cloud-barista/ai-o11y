@@ -305,7 +305,10 @@ func TestTargetMetrics(t *testing.T) {
 	if m := amdStatus["temperature.edge"]; !m.Supported {
 		t.Errorf("amd gpu with no count, amd-smi field = %+v, want supported", m)
 	}
-	if m := amdStatus["hw.gpu.utilization"]; m.Supported || m.Reason != "The collector for the target's GPU does not provide it" {
+	if m := amdStatus["hw.gpu.utilization"]; !m.Supported {
+		t.Errorf("amd gpu with no count, common gpu field = %+v, want supported", m)
+	}
+	if m := amdStatus["temperature.gpu"]; m.Supported || m.Reason != "The collector for the target's GPU does not provide it" {
 		t.Errorf("amd gpu with no count, nvidia-only field = %+v", m)
 	}
 	if m := status("k1")["hw.gpu.utilization"]; m.Supported || m.Reason != "No collector running on this target provides it" {

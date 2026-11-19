@@ -78,6 +78,18 @@ The AMD GPU receiver writes these, leaving out a value amd-smi gives as `N/A` or
 | `amd_smi.pcie.width`, `amd_smi.pcie.replay_count` |  |
 | `amd_smi.ecc.total_correctable_count`, `amd_smi.ecc.total_uncorrectable_count`, `amd_smi.ecc.total_deferred_count` |  |
 
+The common GPU fields are read from both receivers:
+
+| Field | nvidia-smi | amd-smi |
+|---|---|---|
+| `hw.gpu.utilization` | `utilization.gpu` / 100 (general); `utilization.encoder`, `utilization.decoder` / 100 | `usage.gfx_activity` / 100 (general only) |
+| `hw.gpu.memory.usage` | `memory.used` MiB in bytes | `mem_usage.used_vram` MiB in bytes |
+| `hw.gpu.memory.limit` | `memory.total` MiB in bytes | `mem_usage.total_vram` MiB in bytes |
+| `hw.gpu.memory.utilization` | `memory.used` / `memory.total` | `mem_usage.used_vram` / `mem_usage.total_vram` |
+| `hw.power` | `power.draw` | `power.socket_power` |
+
+A query of one of them evaluates each receiver's expression, with its window, and joins the two with PromQL `or` before `within`, `across` and `topK`, so it answers the GPUs of both vendors together, also on a VM with one of each. amd-smi reports no encoder or decoder share of its own (`usage.mm_activity` is the multimedia engine's, not split by task), so `hw.gpu.task` `encoder` and `decoder` answer NVIDIA GPUs only. Where amd-smi gives a value as `N/A`, such as `usage` and `power` on the Radeon PRO V710 virtual function, the field has no series for that GPU.
+
 | Field | Schema | Unit | Attribute (values) | Dimension | Provided |
 |---|---|---|---|---|---|
 | `system.cpu.utilization` | common | 1 | `cpu.mode` (user, system, nice, idle, iowait, interrupt, steal, softirq) |  | yes |
@@ -165,8 +177,5 @@ The AMD GPU receiver writes these, leaving out a value amd-smi gives as `N/A` or
   helper installed, and has not been checked on such a GPU yet. XID errors are
   counted from the kernel log, so XIDs the kernel's log buffer no longer holds
   are not counted. GPUs of vendors other than NVIDIA and AMD are not read.
-- The common GPU fields (`hw.gpu.*`, `hw.power`) are computed from `nvidia-smi`
-  only: a query renders one collector's expression per field, so AMD GPUs give
-  their `amd_smi` fields alone until it can combine two.
 - Fields whose value only the existing screens compute, such as average I/O
   wait per operation, are not in the catalog yet.
