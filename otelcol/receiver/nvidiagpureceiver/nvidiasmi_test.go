@@ -19,7 +19,7 @@ func read(t *testing.T, name string) []byte {
 	return b
 }
 
-// fakeSMI answers --help-query-gpu and --query-gpu from recorded output.
+// fakeSMI answers --help-query-gpu and --query-gpu from files in testdata.
 func fakeSMI(t *testing.T, help, query string) (*nvidiaSMI, *[]string) {
 	t.Helper()
 	var asked []string
@@ -35,8 +35,9 @@ func fakeSMI(t *testing.T, help, query string) (*nvidiaSMI, *[]string) {
 }
 
 // TestReadRecordedGTX1050Ti reads output recorded from a GeForce GTX 1050 Ti
-// on driver 580.178.04: the fields it does not support are [N/A] or N/A and
-// are left out.
+// on driver 580.178.04, with the uuid replaced by a placeholder and the
+// pci.bus_id column, which the recording did not query, added by hand: the
+// fields it does not support are [N/A] or N/A and are left out.
 func TestReadRecordedGTX1050Ti(t *testing.T) {
 	s, asked := fakeSMI(t, "help-query-gpu-580.txt", "query-gtx1050ti-580.csv")
 	gpus, err := s.Read(context.Background())

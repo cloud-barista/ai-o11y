@@ -100,10 +100,13 @@ func counterFrom(t *testing.T, name string) *xidCounter {
 	return c
 }
 
-// TestCountRecordedKmsg counts testdata/kmsg-xid.txt: the record repeated with
-// its sequence number is counted once, the same GPU in another case is the
-// same GPU, and SXid, other lines and a bad address are not counted.
-func TestCountRecordedKmsg(t *testing.T) {
+// TestCountKmsgSample counts testdata/kmsg-xid.txt, a sample written to the
+// /dev/kmsg record format ("<pri>,<seq>,<ts>,<flags>;<message>" followed by
+// " KEY=value" lines) and the NVRM Xid line format, not a recording: the
+// record repeated with its sequence number is counted once, the same GPU in
+// another case is the same GPU, and SXid, other lines and a bad address are
+// not counted.
+func TestCountKmsgSample(t *testing.T) {
 	got := counterFrom(t, "kmsg-xid.txt").snapshot()
 	want := []struct {
 		pci string
