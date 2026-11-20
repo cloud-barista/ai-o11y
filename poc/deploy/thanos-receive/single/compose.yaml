@@ -116,6 +116,10 @@ services:
       - --endpoint=receive-3:10901
       - --endpoint=store:10901
       - --query.replica-label=receive_replica
+      # The copies are the same samples, so they are merged one to one. The
+      # default "penalty" merging, made for replicas that scrape at their own
+      # times, drops samples here.
+      - --deduplication.func=chain
     ports: ["${THANOS_QUERY_PORT}:10902"]
     depends_on: [receive-1, receive-2, receive-3, store]
 
