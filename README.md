@@ -85,8 +85,9 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   `-opentelemetry.usePrometheusNaming`. A Thanos Receive stores the same names;
   ai-o11y has not been run against one yet.
   `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
-- **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s the collector
-  keeps no queue, so samples are dropped while every address fails.
+- **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s and
+  `AIO11Y_BACKEND_WRITE_MODE=failover` the collector keeps no queue, so samples
+  are dropped while every address fails, and a few at each switch.
 - **Accounts**: basic auth only. Collectors read the write account's password
   from `AIO11Y_WRITE_PASSWORD` on their host; a collector without it still
   starts, and every write is refused. Over plain HTTP the accounts travel in

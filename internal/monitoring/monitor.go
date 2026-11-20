@@ -346,8 +346,8 @@ type Series struct {
 // Backend stores samples and answers queries.
 type Backend interface {
 	// WriteEndpoints are where collectors send samples, in order of
-	// preference: a collector sends to the first and moves to the next while
-	// it fails. Each one leads to the same stored data.
+	// preference; how a collector uses several is a collector rendering
+	// option (collector.WriteMode).
 	WriteEndpoints() []Endpoint
 	Query(ctx context.Context, q QuerySpec) ([]Series, error)
 	Series(ctx context.Context, match string) ([]map[string]string, error)

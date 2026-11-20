@@ -47,6 +47,22 @@ func TestBackendTimeouts(t *testing.T) {
 	}
 }
 
+func TestWriteMode(t *testing.T) {
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", "")
+	cfg, err := Load()
+	if err != nil || cfg.Backend.WriteMode != WriteFailover {
+		t.Fatalf("unset = %+v, %v, want failover", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", " All ")
+	if cfg, err = Load(); err != nil || cfg.Backend.WriteMode != WriteAll {
+		t.Fatalf("all = %+v, %v", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", "round-robin")
+	if _, err := Load(); err == nil {
+		t.Error("an unknown write mode loaded")
+	}
+}
+
 func TestBackendProvider(t *testing.T) {
 	t.Setenv("AIO11Y_BACKEND_PROVIDER", "")
 	cfg, err := Load()

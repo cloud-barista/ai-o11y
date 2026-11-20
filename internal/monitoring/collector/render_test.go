@@ -247,6 +247,20 @@ func TestRenderFailover(t *testing.T) {
 	checkGolden(t, "vm-failover.golden.yaml", got)
 }
 
+// TestRenderWriteAll pins the configuration that sends to every endpoint: an
+// exporter per endpoint with its own queue and retries, all of them in the
+// metrics pipeline, and no failover connector. An unknown mode is an error.
+func TestRenderWriteAll(t *testing.T) {
+	got, err := Render(vm(), kinds, builtin(t), failover, Options{WriteMode: WriteAll})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	checkGolden(t, "vm-write-all.golden.yaml", got)
+	if _, err := Render(vm(), kinds, builtin(t), failover, Options{WriteMode: "round-robin"}); err == nil {
+		t.Error("an unknown write mode rendered")
+	}
+}
+
 // TestRenderWriteAccount pins the configuration for write endpoints with an
 // account: a basic auth extension per exporter whose password is an
 // environment reference, never the password itself.
