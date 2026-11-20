@@ -12,7 +12,8 @@ Each backend has its own directory, with `single/` for everything on one host
 |---|---|---|---|---|
 | [thanos-sidecar](thanos-sidecar/) | thanos | Two Prometheus replicas the collectors write to both of, a Thanos Sidecar each, a Querier, a Store Gateway and a Compactor, blocks in [storage/seaweedfs](storage/seaweedfs/). | ✓ | ✓ (3 VMs) |
 | [thanos-receive](thanos-receive/) | thanos | Three Thanos Receives keeping two copies of every sample, a Querier, a Store Gateway and a Compactor, blocks in [storage/seaweedfs](storage/seaweedfs/). | ✓ | ✓ (3 VMs) |
-| [victoria-single](victoria-single/) | victoria | Two single-node VictoriaMetrics, two vmagents writing to both, and two vmauths as the write and query entry points. | ✓ | ✓ (systemd) |
+| [victoria-single](victoria-single/) | victoria | Two single-node VictoriaMetrics, two vmagents writing to both, and two vmauths as the write and query entry points. | ✓ | ✓ (2 VMs) |
+| [victoria-cluster](victoria-cluster/) | victoria | Three vmstorages keeping two copies of every sample, vminserts, vmselects and vmauths as the write and query entry points. | ✓ | ✓ (3 VMs) |
 | [storage/seaweedfs](storage/seaweedfs/) | | SeaweedFS with an S3 gateway, the object storage of the Thanos samples. | ✓ | ✓ (3 VMs) |
 
 Each stores Prometheus names (`system_cpu_time_seconds_total`), which ai-o11y's

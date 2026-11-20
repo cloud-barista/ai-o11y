@@ -14,7 +14,7 @@ ai-o11y ──query─▶ vmauth-1 / vmauth-2 ──▶ storage A or B
 
 vmauth has two accounts: a writer that may only write, for collectors, and a
 reader that may only query, for ai-o11y. Their names and passwords are in
-`.env` (`node.env` on VMs); change the sample passwords before exposing vmauth.
+`.env`; change the sample passwords before exposing vmauth.
 The samples speak plain HTTP, so the passwords travel in clear text: put TLS in
 front of vmauth before it is reachable from outside a private network.
 
@@ -44,17 +44,31 @@ Each storage deduplicates the two copies a vmagent failover may write
 vmauth-1 on port 8427 and vmauth-2 on 8428 by default; see
 [single/.env.example](single/.env.example).
 
-## Distributed: [distributed/](distributed/)
+## Over two VMs: [distributed/](distributed/)
 
-[distributed/](distributed/) installs one storage VM: VictoriaMetrics, a
-vmagent writing to both VMs' storages and a vmauth preferring its own VM, as
-systemd services (no Docker). Run it on each VM with SELF and PEER swapped:
+A storage, a vmagent and a vmauth on each VM. Both VMs run the same
+[distributed/compose.yaml](distributed/compose.yaml) with their own `.env`
+([distributed/.env.example](distributed/.env.example)), `SELF_ADDR` and
+`PEER_ADDR` swapped:
 
 ```sh
-cp distributed/node.env.example distributed/node.env   # set SELF_ADDR, PEER_ADDR and the rest
-sudo distributed/install.sh distributed/node.env
+cd victoria-single/distributed
+cp .env.example .env   # set SELF_ADDR, PEER_ADDR and the passwords
+docker compose up -d
 ```
 
-It downloads the release from GitHub and checks it against the release's
-checksums. Ports: 8427 (vmauth), 8428 (storage), 8429 (vmagent); collectors
-and ai-o11y need 8427, the two VMs need 8428 and 8429 between them.
+Every part listens on the VM's own address (`SELF_ADDR`, host networking):
+
+| Port | Part | Reached by |
+|---|---|---|
+| 8427 | vmauth | collectors, ai-o11y |
+| 8428 | storage | both VMs' vmagents and vmauths |
+| 8429 | vmagent | both VMs' vmauths |
+
+ai-o11y settings:
+
+```sh
+AIO11Y_BACKEND_PROVIDER=victoria
+AIO11Y_BACKEND_QUERY_URL=http://<VM1>:8427,http://<VM2>:8427
+AIO11Y_BACKEND_WRITE_URL=http://<VM1>:8427/opentelemetry/v1/metrics,http://<VM2>:8427/opentelemetry/v1/metrics
+```

@@ -1,0 +1,69 @@
+# One VM of the single-node VictoriaMetrics pair: its storage, a vmagent that
+# writes every sample to both VMs' storages and a vmauth that prefers this VM.
+# Both VMs run this same file with their own .env, SELF_ADDR and PEER_ADDR
+# swapped (../README.md).
+#
+# Host networking: each part listens on SELF_ADDR, the VM's own address, which
+# the other VM reaches it at. Ports in ../README.md.
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND_PROVIDER=victoria
+#   AIO11Y_BACKEND_QUERY_URL=http://<VM1>:8427,http://<VM2>:8427
+#   AIO11Y_BACKEND_WRITE_URL=http://<VM1>:8427/opentelemetry/v1/metrics,http://<VM2>:8427/opentelemetry/v1/metrics
+#   AIO11Y_BACKEND_QUERY_USERNAME=${VMAUTH_READER_USERNAME}
+#   AIO11Y_BACKEND_QUERY_PASSWORD=${VMAUTH_READER_PASSWORD}
+#   AIO11Y_BACKEND_WRITE_USERNAME=${VMAUTH_WRITER_USERNAME}
+# and AIO11Y_WRITE_PASSWORD=${VMAUTH_WRITER_PASSWORD} where each collector runs.
+name: aio11y-victoria
+
+services:
+  # This VM's copy of every sample.
+  storage:
+    image: victoriametrics/victoria-metrics:${VM_VERSION}
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -httpListenAddr=${SELF_ADDR}:8428
+      - -storageDataPath=/storage
+      - -retentionPeriod=${VM_RETENTION}
+      # The two copies a vmagent failover may write are merged into one.
+      - -dedup.minScrapeInterval=${VM_DEDUP_INTERVAL}
+    volumes: [storage:/storage]
+
+  # Writes every sample to both storages, buffering on disk for one that is
+  # down. Stores Prometheus names (system_cpu_time_seconds_total), the names
+  # ai-o11y's metric catalog queries.
+  vmagent:
+    image: victoriametrics/vmagent:${VM_VERSION}
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -httpListenAddr=${SELF_ADDR}:8429
+      - -remoteWrite.url=http://${SELF_ADDR}:8428/api/v1/write
+      - -remoteWrite.url=http://${PEER_ADDR}:8428/api/v1/write
+      - -remoteWrite.tmpDataPath=/buffer
+      - -remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_PER_URL}
+      - -opentelemetry.promoteScopeMetadata=${VMAGENT_OTLP_SCOPE_LABELS}
+      - -opentelemetry.usePrometheusNaming
+    volumes: [vmagent:/buffer]
+
+  # The entry point of collectors and ai-o11y (../vmauth.yml).
+  vmauth:
+    image: victoriametrics/vmauth:${VM_VERSION}
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - -httpListenAddr=${SELF_ADDR}:8427
+      - -auth.config=/etc/vmauth/auth.yml
+    environment:
+      SELF_ADDR: ${SELF_ADDR}
+      PEER_ADDR: ${PEER_ADDR}
+      VMAUTH_WRITER_USERNAME: ${VMAUTH_WRITER_USERNAME}
+      VMAUTH_WRITER_PASSWORD: ${VMAUTH_WRITER_PASSWORD}
+      VMAUTH_READER_USERNAME: ${VMAUTH_READER_USERNAME}
+      VMAUTH_READER_PASSWORD: ${VMAUTH_READER_PASSWORD}
+    volumes: [./vmauth.yml:/etc/vmauth/auth.yml:ro]
+
+volumes:
+  storage:
+  vmagent:
