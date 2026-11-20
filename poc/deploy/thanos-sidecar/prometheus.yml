@@ -1,9 +1,10 @@
 global:
   scrape_interval: 30s
-  # The Sidecar labels every block with these; a second Prometheus replica
-  # would differ only in "replica", which the Querier deduplicates on.
+  # The Sidecar labels every block with these. The replicas differ only in
+  # "replica" (PROMETHEUS_REPLICA, set per replica in the compose files),
+  # which the Querier deduplicates on.
   external_labels:
-    replica: "0"
+    replica: ${PROMETHEUS_REPLICA}
 
 otlp:
   # Store Prometheus names (system.cpu.time in seconds as

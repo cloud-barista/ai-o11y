@@ -39,8 +39,8 @@ A master, a volume server and a filer with its S3 gateway on every VM, and the
 MariaDB on one of them (`COMPOSE_PROFILES=db`). Every VM runs the same
 [distributed/compose.yaml](distributed/compose.yaml) with its own `.env`
 ([distributed/.env.example](distributed/.env.example)): only `SELF_ADDR` and
-`COMPOSE_PROFILES` differ. Started with thanos-receive/distributed it takes that
-sample's `.env`. Each part listens on `SELF_ADDR` (host networking):
+`COMPOSE_PROFILES` differ. Started with a thanos-*/distributed sample it takes
+that sample's `.env`. Each part listens on `SELF_ADDR` (host networking):
 
 | Port | Part |
 |---|---|

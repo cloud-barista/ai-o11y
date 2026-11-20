@@ -126,6 +126,9 @@ services:
     command:
       - compact
       - --wait
+      # Merges the overlapping blocks late samples make, rather than halting
+      # on them.
+      - --compact.enable-vertical-compaction
       - --data-dir=/data
       - --http-address=0.0.0.0:10902
       - --retention.resolution-raw=${COMPACT_RETENTION_RAW}
