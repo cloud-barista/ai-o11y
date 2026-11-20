@@ -25,7 +25,7 @@ CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / V
 | `internal/monitoring/source/tumblebug` | Management platform adapter for CB-Tumblebug. |
 | `internal/monitoring/catalog` | Metric catalog: the fields queries name, see [docs/metric-catalog.md](docs/metric-catalog.md). |
 | `internal/monitoring/query` | Renders queries to PromQL and runs them in chunks of targets. |
-| `internal/monitoring/backend` | Prometheus query API client and the Thanos and VictoriaMetrics backends, selected by `AIO11Y_BACKEND`. |
+| `internal/monitoring/backend` | Prometheus query API client and the Thanos and VictoriaMetrics backends, selected by `AIO11Y_BACKEND_PROVIDER`. |
 | `internal/monitoring/collector` | Renders the collector configuration of a target. |
 | `otelcol/` | The collector, built with the OpenTelemetry Collector Builder, and its own components (`otelcol/receiver/nvidiagpureceiver`). Not part of the service's Go module. |
 
@@ -79,13 +79,15 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   attributes given at registration included.
 - **Backend**: verified locally against Prometheus 3.16 with a Thanos 0.42
   Sidecar and Querier, and against two single-node VictoriaMetrics 1.155 behind
-  vmauth ([poc/deploy](poc/deploy)). The backend must store the names
-  collectors send (`system.cpu.time`): Prometheus with
-  `otlp.translation_strategy: NoTranslation`, VictoriaMetrics with its default.
-  A Thanos Receive rewrites the names and is not supported.
+  vmauth ([poc/deploy](poc/deploy)). The backend must store Prometheus names
+  (`system_cpu_time_seconds_total`): Prometheus with its default
+  `otlp.translation_strategy`, VictoriaMetrics with
+  `-opentelemetry.usePrometheusNaming`. A Thanos Receive stores the same names;
+  ai-o11y has not been run against one yet.
   `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
-- **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s the collector
-  keeps no queue, so samples are dropped while every address fails.
+- **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s and
+  `AIO11Y_BACKEND_WRITE_MODE=failover` the collector keeps no queue, so samples
+  are dropped while every address fails, and a few at each switch.
 - **Accounts**: basic auth only. Collectors read the write account's password
   from `AIO11Y_WRITE_PASSWORD` on their host; a collector without it still
   starts, and every write is refused. Over plain HTTP the accounts travel in

@@ -3,17 +3,16 @@
 # go to a vmagent, queries to a storage, each to the first one that is up.
 #
 # ai-o11y settings for this setup:
-#   AIO11Y_BACKEND=victoria
+#   AIO11Y_BACKEND_PROVIDER=victoria
 #   AIO11Y_BACKEND_QUERY_URL=http://<host>:${VMAUTH_1_PORT},http://<host>:${VMAUTH_2_PORT}
-#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${VMAUTH_1_PORT}/opentelemetry,http://<host>:${VMAUTH_2_PORT}/opentelemetry
+#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${VMAUTH_1_PORT}/opentelemetry/v1/metrics,http://<host>:${VMAUTH_2_PORT}/opentelemetry/v1/metrics
 #   AIO11Y_BACKEND_QUERY_USERNAME=${VMAUTH_READER_USERNAME}
 #   AIO11Y_BACKEND_QUERY_PASSWORD=${VMAUTH_READER_PASSWORD}
 #   AIO11Y_BACKEND_WRITE_USERNAME=${VMAUTH_WRITER_USERNAME}
 # and AIO11Y_WRITE_PASSWORD=${VMAUTH_WRITER_PASSWORD} where each collector runs.
 #
-# vmagent keeps the names collectors send (system.cpu.time), the names
-# ai-o11y's metric catalog queries: -opentelemetry.usePrometheusNaming stays
-# off, its default.
+# vmagent stores Prometheus names (system_cpu_time_seconds_total), the names
+# ai-o11y's metric catalog queries: -opentelemetry.usePrometheusNaming.
 name: aio11y-victoria
 
 x-storage: &storage
@@ -31,6 +30,7 @@ x-vmagent: &vmagent
     - -remoteWrite.tmpDataPath=/buffer
     - -remoteWrite.maxDiskUsagePerURL=${VMAGENT_MAX_DISK_PER_URL}
     - -opentelemetry.promoteScopeMetadata=${VMAGENT_OTLP_SCOPE_LABELS}
+    - -opentelemetry.usePrometheusNaming
 
 services:
   vm-a:

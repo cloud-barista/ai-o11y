@@ -1,0 +1,13 @@
+# SeaweedFS master maintenance, which the image does not set up: a volume
+# left with fewer copies than SEAWEEDFS_REPLICATION asks for (its volume
+# server lost, or a disk replaced) gets them back only when
+# volume.fix.replication runs. The leading master runs these every
+# sleep_minutes, as `weed shell` would.
+[master.maintenance]
+scripts = """
+  lock
+  volume.fix.replication -apply
+  s3.clean.uploads -timeAgo=24h
+  unlock
+"""
+sleep_minutes = 17

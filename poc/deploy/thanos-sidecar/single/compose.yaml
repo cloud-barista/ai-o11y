@@ -1,0 +1,148 @@
+# Two Prometheus replicas taking OTLP from the collectors, each with a Thanos
+# Sidecar that uploads its blocks to a SeaweedFS cluster; a Thanos Querier
+# reads both and a Store Gateway (the bucket); one Compactor. Everything on one
+# host, to try the setup and develop against: the host is still a single point
+# of failure (../README.md).
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND_PROVIDER=thanos
+#   AIO11Y_BACKEND_QUERY_URL=http://<host>:${THANOS_QUERY_PORT}
+#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${PROMETHEUS_1_PORT}/api/v1/otlp/v1/metrics,http://<host>:${PROMETHEUS_2_PORT}/api/v1/otlp/v1/metrics
+#   AIO11Y_BACKEND_WRITE_MODE=all
+name: aio11y-thanos-sidecar
+
+# The object storage, started with this file. It reads its settings from this
+# directory's .env too, so the S3 account is set once.
+include:
+  - path: ../../storage/seaweedfs/single/compose.yaml
+    env_file: .env
+
+x-thanos: &thanos
+  image: quay.io/thanos/thanos:${THANOS_VERSION}
+  restart: unless-stopped
+
+# A Prometheus replica. The replicas' series differ only in the external label
+# "replica" (PROMETHEUS_REPLICA, ../prometheus.yml), which the Querier
+# deduplicates on.
+x-prometheus: &prometheus
+  image: prom/prometheus:${PROMETHEUS_VERSION}
+  restart: unless-stopped
+  command:
+    - --config.file=/etc/prometheus/prometheus.yml
+    - --storage.tsdb.path=/prometheus
+    - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION}
+    - --web.enable-otlp-receiver
+    # The Sidecar uploads blocks of a fixed size and leaves compaction to the
+    # Compactor.
+    - --storage.tsdb.min-block-duration=2h
+    - --storage.tsdb.max-block-duration=2h
+    # Late samples (out_of_order_time_window, ../prometheus.yml) become blocks
+    # overlapping the others. Prometheus would merge those itself into blocks
+    # the Sidecar does not upload; left alone, they are uploaded and the
+    # Compactor merges them.
+    - --no-storage.tsdb.allow-overlapping-compaction
+
+# A Sidecar: serves its Prometheus's recent samples to the Querier and uploads
+# every block Prometheus cuts (every 2 hours) to the bucket. It runs as
+# Prometheus's user, as it reads and marks Prometheus's data directory.
+x-sidecar: &sidecar
+  <<: *thanos
+  user: "65534"
+
+services:
+  # Thanos runs as uid 1001 and its data volumes start owned by root; this
+  # hands them over once, before the Thanos services start.
+  thanos-data:
+    image: quay.io/thanos/thanos:${THANOS_VERSION}
+    user: root
+    entrypoint: [chown, "1001:1001", /store, /compact]
+    volumes: [store:/store, compact:/compact]
+
+  prometheus-1:
+    <<: *prometheus
+    environment: {PROMETHEUS_REPLICA: "1"}
+    volumes: [prometheus-1:/prometheus, ../prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["${PROMETHEUS_1_PORT}:9090"]
+  sidecar-1:
+    <<: *sidecar
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus-1:9090
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-1:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [prometheus-1:/prometheus]
+    depends_on: [prometheus-1, bucket]
+
+  prometheus-2:
+    <<: *prometheus
+    environment: {PROMETHEUS_REPLICA: "2"}
+    volumes: [prometheus-2:/prometheus, ../prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    ports: ["${PROMETHEUS_2_PORT}:9090"]
+  sidecar-2:
+    <<: *sidecar
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus-2:9090
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-2:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [prometheus-2:/prometheus]
+    depends_on: [prometheus-2, bucket]
+
+  # Serves the blocks in the bucket to the Querier.
+  store:
+    <<: *thanos
+    command:
+      - store
+      - --data-dir=/data
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-2:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [store:/data]
+    depends_on: [bucket, thanos-data]
+
+  # Recent samples from both Sidecars, older blocks from the Store Gateway;
+  # the replicas differ only in "replica", which it deduplicates on.
+  query:
+    <<: *thanos
+    command:
+      - query
+      - --http-address=0.0.0.0:10902
+      - --endpoint=sidecar-1:10901
+      - --endpoint=sidecar-2:10901
+      - --endpoint=store:10901
+      - --query.replica-label=replica
+      # Every replica gets the same samples (AIO11Y_BACKEND_WRITE_MODE=all), so
+      # the copies are merged one to one. The default "penalty" merging, made
+      # for replicas that scrape at their own times, drops samples here.
+      - --deduplication.func=chain
+    ports: ["${THANOS_QUERY_PORT}:10902"]
+    depends_on: [sidecar-1, sidecar-2, store]
+
+  # Compacts and downsamples the bucket and applies its retention. One per
+  # bucket only: a second would compact the same blocks twice.
+  compact:
+    <<: *thanos
+    command:
+      - compact
+      - --wait
+      # Merges the overlapping blocks late samples make, rather than halting
+      # on them.
+      - --compact.enable-vertical-compaction
+      - --data-dir=/data
+      - --http-address=0.0.0.0:10902
+      - --retention.resolution-raw=${COMPACT_RETENTION_RAW}
+      - --retention.resolution-5m=${COMPACT_RETENTION_5M}
+      - --retention.resolution-1h=${COMPACT_RETENTION_1H}
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-3:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [compact:/data]
+    depends_on: [bucket, thanos-data]
+
+volumes:
+  prometheus-1:
+  prometheus-2:
+  store:
+  compact:

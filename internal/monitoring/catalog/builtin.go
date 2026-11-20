@@ -11,11 +11,14 @@ import (
 // Collectors an expression can come from.
 const (
 	// CollectorHostmetrics is the OpenTelemetry hostmetrics receiver, sent over
-	// OTLP. Its series keep the receiver's metric and attribute names
-	// (system.cpu.time, state): the backend stores what collectors send.
+	// OTLP. The backend stores its metrics under Prometheus names (see
+	// series): system.cpu.time in seconds becomes
+	// system_cpu_time_seconds_total. Its attribute names have no dots and
+	// stay as sent (state, device).
 	CollectorHostmetrics = "hostmetrics"
 	// CollectorNvidiaSMI is the nvidia_gpu receiver built into the collector,
-	// reading nvidia-smi; it writes nvidia_smi.<query field>.
+	// reading nvidia-smi; it writes nvidia_smi.<query field>, stored as
+	// nvidia_smi_<field>_<unit> (see nvidiaSMI).
 	CollectorNvidiaSMI = "nvidia_smi"
 	// CollectorNVML is the NVML source the nvidia_gpu receiver does not have
 	// yet; fields only it can give name it.
@@ -51,7 +54,7 @@ func hm(expr string) map[string]string { return map[string]string{CollectorHostm
 // scraper sends CPU time every scrape. It fills the fields whose hostmetrics
 // series is left out when the value is zero.
 var hmReporting = map[string]string{
-	CollectorHostmetrics: `0 * group by (entity_id) (` + series("system.cpu.time") + `)`,
+	CollectorHostmetrics: `0 * group by (entity_id) (` + series("system_cpu_time_seconds_total") + `)`,
 }
 
 // relabel copies the hostmetrics label from into the attribute label of attr,
@@ -79,17 +82,26 @@ func by(labels ...string) string {
 	return strings.Join(out, ", ")
 }
 
-// series selects the collector series name for the targets: the matchers, then
-// $sel. series("system.cpu.time", `state="idle"`) is
-// {"system.cpu.time", state="idle", $sel}.
+// series selects a stored series for the targets: the matchers, then $sel.
+// series("system_cpu_time_seconds_total", `state="idle"`) is
+// system_cpu_time_seconds_total{state="idle", $sel}.
+//
+// Names are the ones the backend stores. Every supported backend turns an
+// OTLP metric into the same Prometheus name: dots become underscores, then
+// the unit (seconds, bytes, ratio, percent, ...) and, for a monotonic sum,
+// _total are appended. That is the default of Prometheus' OTLP receiver
+// (otlp.translation_strategy UnderscoreEscapingWithSuffixes), what Thanos
+// Receive always does, and VictoriaMetrics with
+// -opentelemetry.usePrometheusNaming; the names were compared on all three
+// with the hostmetrics and nvidia_gpu receivers.
 func series(name string, matchers ...string) string {
-	return "{" + strings.Join(append(append([]string{monitoring.PromQLName(name)}, matchers...), monitoring.PlaceholderSelector), ", ") + "}"
+	return name + "{" + strings.Join(append(matchers, monitoring.PlaceholderSelector), ", ") + "}"
 }
 
 func cpuRows() []monitoring.MetricRow {
-	const time = `rate({"system.cpu.time", $sel}[$range])`
+	const time = `rate(system_cpu_time_seconds_total{$sel}[$range])`
 	total := `sum by (entity_id) (` + time + `)`
-	idle := `sum by (entity_id) (rate({"system.cpu.time", state="idle", $sel}[$range]))`
+	idle := `sum by (entity_id) (rate(system_cpu_time_seconds_total{state="idle", $sel}[$range]))`
 	mode := "cpu.mode"
 	return []monitoring.MetricRow{
 		{
@@ -104,12 +116,12 @@ func cpuRows() []monitoring.MetricRow {
 		{
 			Name: "system.cpu.logical.count", Area: "cpu", Unit: "{cpu}", Kind: monitoring.KindGauge,
 			Description: "Logical CPUs.",
-			Exprs:       hm(`max by (entity_id) ({"system.cpu.logical.count", $sel})`),
+			Exprs:       hm(`max by (entity_id) (system_cpu_logical_count{$sel})`),
 		},
 		{
 			Name: "system.cpu.physical.count", Area: "cpu", Unit: "{cpu}", Kind: monitoring.KindGauge,
 			Description: "Physical CPUs.",
-			Exprs:       hm(`max by (entity_id) ({"system.cpu.physical.count", $sel})`),
+			Exprs:       hm(`max by (entity_id) (system_cpu_physical_count{$sel})`),
 			Enables:     []string{"system.cpu.physical.count"},
 		},
 	}
@@ -127,33 +139,33 @@ func memoryRows() []monitoring.MetricRow {
 		{
 			Name: "system.memory.usage", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
 			Description: "Memory in each system.memory.state. Without one, memory used.",
-			Exprs:       hm(`sum by (entity_id) ({"system.memory.usage", state="used", $sel})`),
-			Attribute:   attr, SplitExprs: hm(split("system.memory.usage")),
+			Exprs:       hm(`sum by (entity_id) (system_memory_usage_bytes{state="used", $sel})`),
+			Attribute:   attr, SplitExprs: hm(split("system_memory_usage_bytes")),
 		},
 		{
 			Name: "system.memory.limit", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
 			Description: "Total memory.",
-			Exprs:       hm(`sum by (entity_id) ({"system.memory.limit", $sel})`),
+			Exprs:       hm(`sum by (entity_id) (system_memory_limit_bytes{$sel})`),
 			Enables:     []string{"system.memory.limit"},
 		},
 		{
 			Name: "system.memory.utilization", Area: "memory", Unit: "1", Kind: monitoring.KindGauge,
 			Description: "Share of memory in each system.memory.state. Without one, the share used.",
-			Exprs:       hm(`sum by (entity_id) ({"system.memory.utilization", state="used", $sel})`),
-			Attribute:   attr, SplitExprs: hm(split("system.memory.utilization")),
+			Exprs:       hm(`sum by (entity_id) (system_memory_utilization_ratio{state="used", $sel})`),
+			Attribute:   attr, SplitExprs: hm(split("system_memory_utilization_ratio")),
 			Enables: []string{"system.memory.utilization"},
 		},
 		{
 			Name: "system.memory.linux.available", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
 			Description: "Memory available for new work (MemAvailable).",
-			Exprs:       hm(`sum by (entity_id) ({"system.linux.memory.available", $sel})`),
+			Exprs:       hm(`sum by (entity_id) (system_linux_memory_available_bytes{$sel})`),
 			Requires:    []string{RequiresLinux},
 			Enables:     []string{"system.linux.memory.available"},
 		},
 		{
 			Name: "system.memory.linux.shared", Area: "memory", Unit: "By", Kind: monitoring.KindGauge,
 			Description: "Shared memory (Shmem).",
-			Exprs:       hm(`sum by (entity_id) ({"system.memory.linux.shared", $sel})`),
+			Exprs:       hm(`sum by (entity_id) (system_memory_linux_shared_bytes{$sel})`),
 			Requires:    []string{RequiresLinux},
 			Enables:     []string{"system.memory.linux.shared"},
 		},
@@ -161,7 +173,7 @@ func memoryRows() []monitoring.MetricRow {
 }
 
 func pagingRows() []monitoring.MetricRow {
-	const usage = "system.paging.usage"
+	const usage = "system_paging_usage_bytes"
 	state := "system.paging.state"
 	total := `sum by (entity_id) (` + series(usage) + `)`
 	byState := `sum by (` + by(state) + `) (` + relabel(series(usage), "state", "system.paging.state", nil) + `)`
@@ -213,30 +225,30 @@ func diskRows() []monitoring.MetricRow {
 	const dev, devName, dir = "device", "system.device.name", "disk.io.direction"
 	return []monitoring.MetricRow{
 		directionSplit("system.disk.io", "disk", "By/s", "Bytes read and written. Without disk.io.direction, both.",
-			"system.disk.io", dev, devName, dir, rw),
+			"system_disk_io_bytes_total", dev, devName, dir, rw),
 		directionSplit("system.disk.operations", "disk", "{operation}/s", "Completed reads and writes. Without disk.io.direction, both.",
-			"system.disk.operations", dev, devName, dir, rw),
+			"system_disk_operations_total", dev, devName, dir, rw),
 		directionSplit("system.disk.operation_time", "disk", "s/s", "Time spent in reads and writes. Without disk.io.direction, both.",
-			"system.disk.operation_time", dev, devName, dir, rw),
+			"system_disk_operation_time_seconds_total", dev, devName, dir, rw),
 		directionSplit("system.disk.merged", "disk", "{operation}/s", "Merged reads and writes. Without disk.io.direction, both.",
-			"system.disk.merged", dev, devName, dir, rw),
+			"system_disk_merged_total", dev, devName, dir, rw),
 		{
 			Name: "system.disk.io_time", Area: "disk", Unit: "s/s", Kind: monitoring.KindRate,
 			Description: "Time the device was busy, per second: its busy share.",
-			Exprs:       hm(`sum by (entity_id, device) (rate({"system.disk.io_time", $sel}[$range]))`),
+			Exprs:       hm(`sum by (entity_id, device) (rate(system_disk_io_time_seconds_total{$sel}[$range]))`),
 			Dimension:   dev, DimensionName: devName,
 		},
 		{
 			Name: "system.disk.pending_operations", Schema: CollectorHostmetrics, Area: "disk", Unit: "{operation}",
 			Kind: monitoring.KindGauge, Description: "I/O operations in progress.",
-			Exprs:     hm(`sum by (entity_id, device) ({"system.disk.pending_operations", $sel})`),
+			Exprs:     hm(`sum by (entity_id, device) (system_disk_pending_operations{$sel})`),
 			Dimension: dev, DimensionName: "device",
 		},
 	}
 }
 
 func filesystemRows() []monitoring.MetricRow {
-	const usage, mnt, mntName = "system.filesystem.usage", "mountpoint", "system.filesystem.mountpoint"
+	const usage, mnt, mntName = "system_filesystem_usage_bytes", "mountpoint", "system.filesystem.mountpoint"
 	state := "system.filesystem.state"
 	limit := `sum by (entity_id, mountpoint) (` + series(usage) + `)`
 	byState := `sum by (` + by(mnt, state) + `) (` + relabel(series(usage), "state", "system.filesystem.state", nil) + `)`
@@ -264,9 +276,9 @@ func filesystemRows() []monitoring.MetricRow {
 		{
 			Name: "system.filesystem.inodes.usage", Schema: CollectorHostmetrics, Area: "filesystem", Unit: "{inode}",
 			Kind: monitoring.KindGauge, Description: "Inodes in each state. Without one, inodes used.",
-			Exprs:      hm(`sum by (entity_id, mountpoint) ({"system.filesystem.inodes.usage", state="used", $sel})`),
+			Exprs:      hm(`sum by (entity_id, mountpoint) (system_filesystem_inodes_usage{state="used", $sel})`),
 			Attribute:  &monitoring.Attribute{Name: "state", Values: []string{"used", "free"}},
-			SplitExprs: hm(`sum by (entity_id, mountpoint, state) ({"system.filesystem.inodes.usage", $sel})`),
+			SplitExprs: hm(`sum by (entity_id, mountpoint, state) (system_filesystem_inodes_usage{$sel})`),
 			Dimension:  mnt, DimensionName: mnt, Requires: []string{RequiresLinux},
 		},
 	}
@@ -277,13 +289,13 @@ func networkRows() []monitoring.MetricRow {
 	const dev, ifName, dir = "device", "network.interface.name", "network.io.direction"
 	return []monitoring.MetricRow{
 		directionSplit("system.network.io", "network", "By/s", "Bytes sent and received. Without network.io.direction, both.",
-			"system.network.io", dev, ifName, dir, tr),
+			"system_network_io_bytes_total", dev, ifName, dir, tr),
 		directionSplit("system.network.packet.count", "network", "{packet}/s", "Packets sent and received. Without network.io.direction, both.",
-			"system.network.packets", dev, "system.device.name", dir, tr),
+			"system_network_packets_total", dev, "system.device.name", dir, tr),
 		directionSplit("system.network.errors", "network", "{error}/s", "Errors sending and receiving. Without network.io.direction, both.",
-			"system.network.errors", dev, ifName, dir, tr),
+			"system_network_errors_total", dev, ifName, dir, tr),
 		directionSplit("system.network.packet.dropped", "network", "{packet}/s", "Packets dropped. Without network.io.direction, both.",
-			"system.network.dropped", dev, ifName, dir, tr),
+			"system_network_dropped_total", dev, ifName, dir, tr),
 	}
 }
 
@@ -292,7 +304,7 @@ func systemRows() []monitoring.MetricRow {
 		return monitoring.MetricRow{
 			Name: "system.cpu.load_average." + window, Schema: CollectorHostmetrics, Area: "system", Unit: "{thread}",
 			Kind: monitoring.KindGauge, Description: "Load average over " + window + ".",
-			Exprs:    hm(`max by (entity_id) (` + series("system.cpu.load_average."+window) + `)`),
+			Exprs:    hm(`max by (entity_id) (` + series("system_cpu_load_average_"+window) + `)`),
 			Requires: []string{RequiresLinux},
 		}
 	}
@@ -300,7 +312,7 @@ func systemRows() []monitoring.MetricRow {
 		{
 			Name: "system.uptime", Area: "system", Unit: "s", Kind: monitoring.KindGauge,
 			Description: "Time since boot.",
-			Exprs:       hm(`max by (entity_id) ({"system.uptime", $sel})`),
+			Exprs:       hm(`max by (entity_id) (system_uptime_seconds{$sel})`),
 		},
 		load("1m"), load("5m"), load("15m"),
 	}
@@ -313,10 +325,10 @@ func processRows() []monitoring.MetricRow {
 		{
 			Name: "system.process.count", Area: "process", Unit: "{process}", Kind: monitoring.KindGauge,
 			Description: "Processes in each process.state. Without one, all processes.",
-			Exprs:       hm(`sum by (entity_id) ({"system.processes.count", $sel})`),
+			Exprs:       hm(`sum by (entity_id) (system_processes_count{$sel})`),
 			Attribute: &monitoring.Attribute{Name: "process.state",
 				Values: []string{"running", "sleeping", "stopped", "defunct", "blocked", "idle"}},
-			SplitExprs: hm(`sum by (` + by(pstate) + `) (` + relabel(`{"system.processes.count", $sel}`, "status", "process.state",
+			SplitExprs: hm(`sum by (` + by(pstate) + `) (` + relabel(`system_processes_count{$sel}`, "status", "process.state",
 				map[string]string{"zombies": "defunct"}) + `)`),
 			Requires: []string{RequiresLinux},
 			// hostmetrics leaves a status with no processes out.
@@ -329,9 +341,31 @@ func processRows() []monitoring.MetricRow {
 	}
 }
 
-// nvidiaSMI is the series name the nvidia_gpu receiver's nvidia-smi source
-// writes a query field under: nvidia_smi.<field>.
-func nvidiaSMI(field string) string { return CollectorNvidiaSMI + "." + field }
+// nvidiaSMI is the stored series name of an nvidia-smi query field. The
+// receiver sends it as nvidia_smi.<field> with the unit nvidia-smi's header
+// gives (nvidiagpureceiver's unitOf), which the backend appends: utilization.gpu
+// [%] is stored as nvidia_smi_utilization_gpu_percent.
+func nvidiaSMI(field string) string {
+	name := CollectorNvidiaSMI + "_" + strings.ReplaceAll(field, ".", "_")
+	for _, u := range smiUnits {
+		if strings.HasPrefix(field, u.prefix) {
+			return name + "_" + u.suffix
+		}
+	}
+	return name
+}
+
+// smiUnits are the name suffixes of the nvidia-smi fields with a unit: the
+// header unit as the receiver maps it (% to %, MiB to MiBy, ...) and as the
+// backend writes it.
+var smiUnits = []struct{ prefix, suffix string }{
+	{"utilization.", "percent"},
+	{"fan.speed", "percent"},
+	{"memory.", "mebibytes"},
+	{"power.", "watts"},
+	{"temperature.", "celsius"},
+	{"clocks.", "MHz"},
+}
 
 // smi maps a GPU field to its nvidia-smi expression.
 func smi(expr string) map[string]string { return map[string]string{CollectorNvidiaSMI: expr} }

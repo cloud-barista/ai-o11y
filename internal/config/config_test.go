@@ -46,3 +46,37 @@ func TestBackendTimeouts(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteMode(t *testing.T) {
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", "")
+	cfg, err := Load()
+	if err != nil || cfg.Backend.WriteMode != WriteFailover {
+		t.Fatalf("unset = %+v, %v, want failover", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", " All ")
+	if cfg, err = Load(); err != nil || cfg.Backend.WriteMode != WriteAll {
+		t.Fatalf("all = %+v, %v", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", "round-robin")
+	if _, err := Load(); err == nil {
+		t.Error("an unknown write mode loaded")
+	}
+}
+
+func TestBackendProvider(t *testing.T) {
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "")
+	cfg, err := Load()
+	if err != nil || cfg.Backend.Provider != BackendThanos {
+		t.Fatalf("unset = %+v, %v, want thanos", cfg, err)
+	}
+	// Set beside the other backend settings, the provider still reads.
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "victoria")
+	t.Setenv("AIO11Y_BACKEND_QUERY_URL", "http://vmauth:8427")
+	if cfg, err = Load(); err != nil || cfg.Backend.Provider != BackendVictoria || len(cfg.Backend.QueryURLs) != 1 {
+		t.Fatalf("victoria = %+v, %v", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "mimir")
+	if _, err := Load(); err == nil {
+		t.Error("an unknown provider loaded")
+	}
+}

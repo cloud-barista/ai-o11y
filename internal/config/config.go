@@ -33,16 +33,20 @@ type CollectorConfig struct {
 // provider is selected; a zero value takes the provider's default. An empty
 // query URL leaves queries and collector configuration unavailable.
 type BackendConfig struct {
-	// Provider is "thanos" or "victoria" (AIO11Y_BACKEND).
+	// Provider is "thanos" or "victoria" (AIO11Y_BACKEND_PROVIDER).
 	Provider string
 	// QueryURLs are addresses serving the Prometheus query API, in order of
 	// preference, given as a comma-separated list; a query moves to the next
 	// when one cannot be reached or answers with a 5xx.
 	QueryURLs []string
-	// WriteURLs are where collectors send samples over OTLP/HTTP, in order of
-	// preference, given as a comma-separated list; a collector moves to the
-	// next while one fails. The collector appends /v1/metrics to each.
+	// WriteURLs are where collectors send samples over OTLP/HTTP, given as a
+	// comma-separated list used as WriteMode says. Each is the full URL a
+	// collector posts to; nothing is appended.
 	WriteURLs []string
+	// WriteMode is how collectors use several WriteURLs: "failover" (the
+	// default) sends to the first and moves to the next while one fails, "all"
+	// sends every sample to each.
+	WriteMode string
 	// Timeout bounds one query, across every query address it is tried at.
 	// ConnectTimeout bounds connecting to one address. Left empty, each takes
 	// the provider's default; a value given must be positive.
@@ -67,7 +71,13 @@ type BackendConfig struct {
 	WriteUsername string
 }
 
-// Metrics backend providers AIO11Y_BACKEND selects.
+// Write modes AIO11Y_BACKEND_WRITE_MODE selects.
+const (
+	WriteFailover = "failover"
+	WriteAll      = "all"
+)
+
+// Metrics backend providers AIO11Y_BACKEND_PROVIDER selects.
 const (
 	BackendThanos   = "thanos"
 	BackendVictoria = "victoria"
@@ -126,6 +136,7 @@ func Load() (*Config, error) {
 	v.SetDefault("db.write_timeout", 30*time.Second)
 	v.SetDefault("backend.provider", BackendThanos)
 	v.SetDefault("backend.partial_response", false)
+	v.SetDefault("backend.write_mode", WriteFailover)
 
 	// AutomaticEnv only resolves keys that viper already knows about.
 	for _, key := range []string{
@@ -146,6 +157,7 @@ func Load() (*Config, error) {
 		"db.write_timeout",
 		"backend.query_url",
 		"backend.write_url",
+		"backend.write_mode",
 		"backend.timeout",
 		"backend.connect_timeout",
 		"backend.max_concurrent",
@@ -159,11 +171,6 @@ func Load() (*Config, error) {
 		if err := v.BindEnv(key); err != nil {
 			return nil, fmt.Errorf("failed to bind env for %q: %w", key, err)
 		}
-	}
-
-	// The provider is AIO11Y_BACKEND itself, not AIO11Y_BACKEND_PROVIDER.
-	if err := v.BindEnv("backend.provider", envPrefix+"_BACKEND"); err != nil {
-		return nil, fmt.Errorf("failed to bind env for %q: %w", "backend.provider", err)
 	}
 
 	timeout, err := optionalDuration(v, "backend.timeout")
@@ -209,6 +216,7 @@ func Load() (*Config, error) {
 			Provider:        strings.ToLower(strings.TrimSpace(v.GetString("backend.provider"))),
 			QueryURLs:       splitURLs(v.GetString("backend.query_url")),
 			WriteURLs:       splitURLs(v.GetString("backend.write_url")),
+			WriteMode:       strings.ToLower(strings.TrimSpace(v.GetString("backend.write_mode"))),
 			Timeout:         timeout,
 			ConnectTimeout:  connectTimeout,
 			MaxConcurrent:   maxConcurrent,
@@ -220,7 +228,10 @@ func Load() (*Config, error) {
 		},
 	}
 	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {
-		return nil, fmt.Errorf("%s_BACKEND must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
+		return nil, fmt.Errorf("%s_BACKEND_PROVIDER must be %q or %q, got %q", envPrefix, BackendThanos, BackendVictoria, cfg.Backend.Provider)
+	}
+	if cfg.Backend.WriteMode != WriteFailover && cfg.Backend.WriteMode != WriteAll {
+		return nil, fmt.Errorf("%s_BACKEND_WRITE_MODE must be %q or %q, got %q", envPrefix, WriteFailover, WriteAll, cfg.Backend.WriteMode)
 	}
 	if (cfg.Backend.QueryUsername == "") != (cfg.Backend.QueryPassword == "") {
 		return nil, fmt.Errorf("%s_BACKEND_QUERY_USERNAME and _QUERY_PASSWORD must be set together", envPrefix)

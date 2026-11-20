@@ -3,15 +3,16 @@ connectors:
         priority_levels:
             - - metrics/0
             - - metrics/1
+        retry_interval: 30s
 exporters:
     otlp_http/0:
-        endpoint: http://vmauth-1:8427/opentelemetry
+        metrics_endpoint: http://vmauth-1:8427/opentelemetry/v1/metrics
         retry_on_failure:
             enabled: false
         sending_queue:
             enabled: false
     otlp_http/1:
-        endpoint: http://vmauth-2:8427/opentelemetry
+        metrics_endpoint: http://vmauth-2:8427/opentelemetry/v1/metrics
         retry_on_failure:
             enabled: false
         sending_queue:

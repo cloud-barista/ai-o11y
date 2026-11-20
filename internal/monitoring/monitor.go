@@ -214,8 +214,9 @@ type Attribute struct {
 
 // PromQLName writes a metric or label name into PromQL: as it is when it is a
 // classic name ([a-zA-Z_:][a-zA-Z0-9_:]*), double-quoted otherwise, as in
-// {"system.cpu.time"} or by ("cpu.mode"), the UTF-8 syntax Prometheus 3 and
-// MetricsQL read. Series keep the names collectors send, dots included.
+// by ("cpu.mode"), the UTF-8 syntax Prometheus 3 and MetricsQL read. Stored
+// series have classic names (system_cpu_time_seconds_total); the attribute
+// labels ai-o11y answers with keep their OpenTelemetry names, dots included.
 func PromQLName(name string) string {
 	for i, r := range name {
 		classic := r == '_' || r == ':' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (i > 0 && r >= '0' && r <= '9')
@@ -345,8 +346,8 @@ type Series struct {
 // Backend stores samples and answers queries.
 type Backend interface {
 	// WriteEndpoints are where collectors send samples, in order of
-	// preference: a collector sends to the first and moves to the next while
-	// it fails. Each one leads to the same stored data.
+	// preference; how a collector uses several is a collector rendering
+	// option (collector.WriteMode).
 	WriteEndpoints() []Endpoint
 	Query(ctx context.Context, q QuerySpec) ([]Series, error)
 	Series(ctx context.Context, match string) ([]map[string]string, error)

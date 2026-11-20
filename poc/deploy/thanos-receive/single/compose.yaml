@@ -1,0 +1,150 @@
+# Three Thanos Receives with replication, writing blocks to a SeaweedFS
+# cluster, read back by a Thanos Querier and Store Gateway; one Compactor.
+# Everything on one host, to try the setup and develop against: the host is
+# still a single point of failure (../README.md).
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND_PROVIDER=thanos
+#   AIO11Y_BACKEND_QUERY_URL=http://<host>:${THANOS_QUERY_PORT}
+#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${RECEIVE_1_PORT}/api/v1/otlp,http://<host>:${RECEIVE_2_PORT}/api/v1/otlp,http://<host>:${RECEIVE_3_PORT}/api/v1/otlp
+name: aio11y-thanos-receive
+
+# The object storage, started with this file. It reads its settings from this
+# directory's .env too, so the S3 account is set once.
+include:
+  - path: ../../storage/seaweedfs/single/compose.yaml
+    env_file: .env
+
+x-thanos: &thanos
+  image: quay.io/thanos/thanos:${THANOS_VERSION}
+  restart: unless-stopped
+
+# A Receive. Each one stores the series the hashring gives it and forwards
+# the rest, keeping RECEIVE_REPLICATION_FACTOR copies of every sample, and
+# uploads a block every 2 hours through its own filer. receive_replica tells
+# the copies apart; the Querier merges them.
+x-receive: &receive
+  <<: *thanos
+  depends_on: [bucket, thanos-data]
+
+services:
+  # Thanos runs as uid 1001 and the data volumes start owned by root; this
+  # hands them over once, before the Thanos services start.
+  thanos-data:
+    image: quay.io/thanos/thanos:${THANOS_VERSION}
+    user: root
+    entrypoint: [chown, "1001:1001", /receive-1, /receive-2, /receive-3, /store, /compact]
+    volumes: [receive-1:/receive-1, receive-2:/receive-2, receive-3:/receive-3, store:/store, compact:/compact]
+
+  receive-1:
+    <<: *receive
+    command:
+      - receive
+      - --tsdb.path=/data
+      - --tsdb.retention=${RECEIVE_RETENTION}
+      # Collectors send at their own times, so a late sample is not rejected.
+      - --tsdb.out-of-order.time-window=10m
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --remote-write.address=0.0.0.0:19291
+      - --receive.hashrings-file=/etc/thanos/hashring.json
+      - --receive.hashrings-algorithm=ketama
+      - --receive.replication-factor=${RECEIVE_REPLICATION_FACTOR}
+      - --receive.local-endpoint=receive-1:10901
+      - --label=receive_replica="1"
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-1:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [receive-1:/data, ./hashring.json:/etc/thanos/hashring.json:ro]
+    ports: ["${RECEIVE_1_PORT}:19291"]
+  receive-2:
+    <<: *receive
+    command:
+      - receive
+      - --tsdb.path=/data
+      - --tsdb.retention=${RECEIVE_RETENTION}
+      - --tsdb.out-of-order.time-window=10m
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --remote-write.address=0.0.0.0:19291
+      - --receive.hashrings-file=/etc/thanos/hashring.json
+      - --receive.hashrings-algorithm=ketama
+      - --receive.replication-factor=${RECEIVE_REPLICATION_FACTOR}
+      - --receive.local-endpoint=receive-2:10901
+      - --label=receive_replica="2"
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-2:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [receive-2:/data, ./hashring.json:/etc/thanos/hashring.json:ro]
+    ports: ["${RECEIVE_2_PORT}:19291"]
+  receive-3:
+    <<: *receive
+    command:
+      - receive
+      - --tsdb.path=/data
+      - --tsdb.retention=${RECEIVE_RETENTION}
+      - --tsdb.out-of-order.time-window=10m
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - --remote-write.address=0.0.0.0:19291
+      - --receive.hashrings-file=/etc/thanos/hashring.json
+      - --receive.hashrings-algorithm=ketama
+      - --receive.replication-factor=${RECEIVE_REPLICATION_FACTOR}
+      - --receive.local-endpoint=receive-3:10901
+      - --label=receive_replica="3"
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-3:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [receive-3:/data, ./hashring.json:/etc/thanos/hashring.json:ro]
+    ports: ["${RECEIVE_3_PORT}:19291"]
+
+  # Serves the blocks in the bucket to the Querier.
+  store:
+    <<: *thanos
+    command:
+      - store
+      - --data-dir=/data
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-1:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [store:/data]
+    depends_on: [bucket, thanos-data]
+
+  # Recent samples from the Receives, older blocks from the Store Gateway;
+  # the copies differ only in receive_replica, which it deduplicates on.
+  query:
+    <<: *thanos
+    command:
+      - query
+      - --http-address=0.0.0.0:10902
+      - --endpoint=receive-1:10901
+      - --endpoint=receive-2:10901
+      - --endpoint=receive-3:10901
+      - --endpoint=store:10901
+      - --query.replica-label=receive_replica
+      # The copies are the same samples, so they are merged one to one. The
+      # default "penalty" merging, made for replicas that scrape at their own
+      # times, drops samples here.
+      - --deduplication.func=chain
+    ports: ["${THANOS_QUERY_PORT}:10902"]
+    depends_on: [receive-1, receive-2, receive-3, store]
+
+  # Compacts and downsamples the bucket and applies its retention. One per
+  # bucket only: a second would compact the same blocks twice.
+  compact:
+    <<: *thanos
+    command:
+      - compact
+      - --wait
+      # Merges the overlapping blocks late samples make, rather than halting
+      # on them.
+      - --compact.enable-vertical-compaction
+      - --data-dir=/data
+      - --http-address=0.0.0.0:10902
+      - --retention.resolution-raw=${COMPACT_RETENTION_RAW}
+      - --retention.resolution-5m=${COMPACT_RETENTION_5M}
+      - --retention.resolution-1h=${COMPACT_RETENTION_1H}
+      - '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "filer-1:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+    volumes: [compact:/data]
+    depends_on: [bucket, thanos-data]
+
+volumes:
+  receive-1:
+  receive-2:
+  receive-3:
+  store:
+  compact:

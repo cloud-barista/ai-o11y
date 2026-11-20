@@ -1,0 +1,96 @@
+# VictoriaMetrics cluster: three vmstorages keeping two copies of every
+# sample, two vminserts, two vmselects and two vmauths as entry points.
+# Everything on one host, to try the setup and develop against: the host is
+# still a single point of failure (../README.md).
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND_PROVIDER=victoria
+#   AIO11Y_BACKEND_QUERY_URL=http://<host>:${VMAUTH_1_PORT},http://<host>:${VMAUTH_2_PORT}
+#   AIO11Y_BACKEND_WRITE_URL=http://<host>:${VMAUTH_1_PORT}/opentelemetry/v1/metrics,http://<host>:${VMAUTH_2_PORT}/opentelemetry/v1/metrics
+#   AIO11Y_BACKEND_QUERY_USERNAME=${VMAUTH_READER_USERNAME}
+#   AIO11Y_BACKEND_QUERY_PASSWORD=${VMAUTH_READER_PASSWORD}
+#   AIO11Y_BACKEND_WRITE_USERNAME=${VMAUTH_WRITER_USERNAME}
+# and AIO11Y_WRITE_PASSWORD=${VMAUTH_WRITER_PASSWORD} where each collector runs.
+name: aio11y-victoria-cluster
+
+x-restart: &restart
+  restart: unless-stopped
+
+# A vmstorage: holds the samples vminserts send it.
+x-vmstorage: &vmstorage
+  <<: *restart
+  image: victoriametrics/vmstorage:${VM_VERSION}-cluster
+  command:
+    - -storageDataPath=/storage
+    - -retentionPeriod=${VM_RETENTION}
+    # The copies a collector failover may write twice are merged into one.
+    - -dedup.minScrapeInterval=${VM_DEDUP_INTERVAL}
+
+# A vminsert: spreads the series over the vmstorages, VM_REPLICATION_FACTOR
+# copies of each on different ones, and moves to the others while one is down.
+# Stores Prometheus names (system_cpu_time_seconds_total), the names ai-o11y's
+# metric catalog queries.
+x-vminsert: &vminsert
+  <<: *restart
+  image: victoriametrics/vminsert:${VM_VERSION}-cluster
+  command:
+    - -storageNode=vmstorage-1:8400,vmstorage-2:8400,vmstorage-3:8400
+    - -replicationFactor=${VM_REPLICATION_FACTOR}
+    - -opentelemetry.promoteScopeMetadata=${VM_OTLP_SCOPE_LABELS}
+    - -opentelemetry.usePrometheusNaming
+  depends_on: [vmstorage-1, vmstorage-2, vmstorage-3]
+
+# A vmselect: answers from every vmstorage and merges the copies. With
+# VM_REPLICATION_FACTOR copies it answers in full while one vmstorage fewer
+# than that is down; past that it fails the query rather than answer part of
+# it.
+x-vmselect: &vmselect
+  <<: *restart
+  image: victoriametrics/vmselect:${VM_VERSION}-cluster
+  command:
+    - -storageNode=vmstorage-1:8401,vmstorage-2:8401,vmstorage-3:8401
+    - -replicationFactor=${VM_REPLICATION_FACTOR}
+    - -dedup.minScrapeInterval=${VM_DEDUP_INTERVAL}
+    - -search.denyPartialResponse
+  depends_on: [vmstorage-1, vmstorage-2, vmstorage-3]
+
+# A vmauth: the entry point of collectors and ai-o11y (./vmauth.yml).
+x-vmauth: &vmauth
+  <<: *restart
+  image: victoriametrics/vmauth:${VM_VERSION}
+  command: [-auth.config=/etc/vmauth/auth.yml]
+  volumes: [./vmauth.yml:/etc/vmauth/auth.yml:ro]
+  environment:
+    VMAUTH_WRITER_USERNAME: ${VMAUTH_WRITER_USERNAME}
+    VMAUTH_WRITER_PASSWORD: ${VMAUTH_WRITER_PASSWORD}
+    VMAUTH_READER_USERNAME: ${VMAUTH_READER_USERNAME}
+    VMAUTH_READER_PASSWORD: ${VMAUTH_READER_PASSWORD}
+  depends_on: [vminsert-1, vminsert-2, vmselect-1, vmselect-2]
+
+services:
+  vmstorage-1:
+    <<: *vmstorage
+    volumes: [vmstorage-1:/storage]
+  vmstorage-2:
+    <<: *vmstorage
+    volumes: [vmstorage-2:/storage]
+  vmstorage-3:
+    <<: *vmstorage
+    volumes: [vmstorage-3:/storage]
+
+  vminsert-1: *vminsert
+  vminsert-2: *vminsert
+  vmselect-1: *vmselect
+  vmselect-2: *vmselect
+
+  vmauth-1:
+    <<: *vmauth
+    ports: ["${VMAUTH_1_PORT}:8427"]
+  vmauth-2:
+    <<: *vmauth
+    ports: ["${VMAUTH_2_PORT}:8427"]
+
+volumes:
+  vmstorage-1:
+  vmstorage-2:
+  vmstorage-3:

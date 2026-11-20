@@ -17,14 +17,14 @@ import (
 // which hostmetrics calls state="wait" and OpenTelemetry cpu.mode="iowait".
 func TestAttributeSplit(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
-  {__name__="system.cpu.time",entity_id="a",cpu="0",state="idle"} 0+15x20
-  {__name__="system.cpu.time",entity_id="a",cpu="0",state="user"} 0+9x20
-  {__name__="system.cpu.time",entity_id="a",cpu="0",state="wait"} 0+6x20
-  {__name__="system.memory.usage",entity_id="a",state="used"} 600x20
-  {__name__="system.memory.usage",entity_id="a",state="buffered"} 100x20
-  {__name__="system.memory.usage",entity_id="a",state="free"} 300x20
-  {__name__="system.processes.count",entity_id="a",status="running"} 3x20
-  {__name__="system.processes.count",entity_id="a",status="zombies"} 1x20
+  {__name__="system_cpu_time_seconds_total",entity_id="a",cpu="0",state="idle"} 0+15x20
+  {__name__="system_cpu_time_seconds_total",entity_id="a",cpu="0",state="user"} 0+9x20
+  {__name__="system_cpu_time_seconds_total",entity_id="a",cpu="0",state="wait"} 0+6x20
+  {__name__="system_memory_usage_bytes",entity_id="a",state="used"} 600x20
+  {__name__="system_memory_usage_bytes",entity_id="a",state="buffered"} 100x20
+  {__name__="system_memory_usage_bytes",entity_id="a",state="free"} 300x20
+  {__name__="system_processes_count",entity_id="a",status="running"} 3x20
+  {__name__="system_processes_count",entity_id="a",status="zombies"} 1x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	at := time.Unix(0, 0).UTC().Add(10 * time.Minute)
@@ -93,12 +93,12 @@ func TestAttributeSplit(t *testing.T) {
 // nvidia-smi source writes them.
 func TestGPUFields(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
-  {__name__="nvidia_smi.utilization.gpu",entity_id="a",uuid="GPU-1",index="0",name="T4"} 40x20
-  {__name__="nvidia_smi.utilization.encoder",entity_id="a",uuid="GPU-1",index="0",name="T4"} 10x20
-  {__name__="nvidia_smi.utilization.decoder",entity_id="a",uuid="GPU-1",index="0",name="T4"} 0x20
-  {__name__="nvidia_smi.memory.used",entity_id="a",uuid="GPU-1",index="0",name="T4"} 1024x20
-  {__name__="nvidia_smi.memory.total",entity_id="a",uuid="GPU-1",index="0",name="T4"} 4096x20
-  {__name__="nvidia_smi.pstate",entity_id="a",uuid="GPU-1",index="0",name="T4"} 8x20
+  {__name__="nvidia_smi_utilization_gpu_percent",entity_id="a",uuid="GPU-1",index="0",name="T4"} 40x20
+  {__name__="nvidia_smi_utilization_encoder_percent",entity_id="a",uuid="GPU-1",index="0",name="T4"} 10x20
+  {__name__="nvidia_smi_utilization_decoder_percent",entity_id="a",uuid="GPU-1",index="0",name="T4"} 0x20
+  {__name__="nvidia_smi_memory_used_mebibytes",entity_id="a",uuid="GPU-1",index="0",name="T4"} 1024x20
+  {__name__="nvidia_smi_memory_total_mebibytes",entity_id="a",uuid="GPU-1",index="0",name="T4"} 4096x20
+  {__name__="nvidia_smi_pstate",entity_id="a",uuid="GPU-1",index="0",name="T4"} 8x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st,

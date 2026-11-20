@@ -1,0 +1,84 @@
+# One VM of the VictoriaMetrics cluster spread over three VMs: a vmstorage, a
+# vminsert, a vmselect and a vmauth on every VM. Every VM runs this same file
+# with its own .env (SELF_ADDR, ../README.md).
+#
+# Host networking: each part listens on SELF_ADDR, the VM's own address, which
+# the other VMs reach it at. Ports in ../README.md.
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND_PROVIDER=victoria
+#   AIO11Y_BACKEND_QUERY_URL=http://<VM1>:8427,http://<VM2>:8427,http://<VM3>:8427
+#   AIO11Y_BACKEND_WRITE_URL=http://<VM1>:8427/opentelemetry/v1/metrics,http://<VM2>:8427/opentelemetry/v1/metrics,http://<VM3>:8427/opentelemetry/v1/metrics
+#   AIO11Y_BACKEND_QUERY_USERNAME=${VMAUTH_READER_USERNAME}
+#   AIO11Y_BACKEND_QUERY_PASSWORD=${VMAUTH_READER_PASSWORD}
+#   AIO11Y_BACKEND_WRITE_USERNAME=${VMAUTH_WRITER_USERNAME}
+# and AIO11Y_WRITE_PASSWORD=${VMAUTH_WRITER_PASSWORD} where each collector runs.
+name: aio11y-victoria-cluster
+
+x-host: &host
+  restart: unless-stopped
+  network_mode: host
+
+services:
+  # Holds the samples the vminserts send it.
+  vmstorage:
+    <<: *host
+    image: victoriametrics/vmstorage:${VM_VERSION}-cluster
+    command:
+      - -httpListenAddr=${SELF_ADDR}:8482
+      - -vminsertAddr=${SELF_ADDR}:8400
+      - -vmselectAddr=${SELF_ADDR}:8401
+      - -storageDataPath=/storage
+      - -retentionPeriod=${VM_RETENTION}
+      # The copies a collector failover may write twice are merged into one.
+      - -dedup.minScrapeInterval=${VM_DEDUP_INTERVAL}
+    volumes: [vmstorage:/storage]
+
+  # Spreads the series over the three vmstorages, VM_REPLICATION_FACTOR
+  # copies of each on different ones, and moves to the others while one is
+  # down. Stores Prometheus names (system_cpu_time_seconds_total), the names
+  # ai-o11y's metric catalog queries.
+  vminsert:
+    <<: *host
+    image: victoriametrics/vminsert:${VM_VERSION}-cluster
+    command:
+      - -httpListenAddr=${SELF_ADDR}:8480
+      - -storageNode=${VM1_ADDR}:8400,${VM2_ADDR}:8400,${VM3_ADDR}:8400
+      - -replicationFactor=${VM_REPLICATION_FACTOR}
+      - -opentelemetry.promoteScopeMetadata=${VM_OTLP_SCOPE_LABELS}
+      - -opentelemetry.usePrometheusNaming
+
+  # Answers from every vmstorage and merges the copies. With
+  # VM_REPLICATION_FACTOR copies it answers in full while one vmstorage fewer
+  # than that is down; past that it fails the query rather than answer part of
+  # it.
+  vmselect:
+    <<: *host
+    image: victoriametrics/vmselect:${VM_VERSION}-cluster
+    command:
+      - -httpListenAddr=${SELF_ADDR}:8481
+      - -storageNode=${VM1_ADDR}:8401,${VM2_ADDR}:8401,${VM3_ADDR}:8401
+      - -replicationFactor=${VM_REPLICATION_FACTOR}
+      - -dedup.minScrapeInterval=${VM_DEDUP_INTERVAL}
+      - -search.denyPartialResponse
+
+  # The entry point of collectors and ai-o11y (./vmauth.yml).
+  vmauth:
+    <<: *host
+    image: victoriametrics/vmauth:${VM_VERSION}
+    command:
+      - -httpListenAddr=${SELF_ADDR}:8427
+      - -auth.config=/etc/vmauth/auth.yml
+    environment:
+      SELF_ADDR: ${SELF_ADDR}
+      VM1_ADDR: ${VM1_ADDR}
+      VM2_ADDR: ${VM2_ADDR}
+      VM3_ADDR: ${VM3_ADDR}
+      VMAUTH_WRITER_USERNAME: ${VMAUTH_WRITER_USERNAME}
+      VMAUTH_WRITER_PASSWORD: ${VMAUTH_WRITER_PASSWORD}
+      VMAUTH_READER_USERNAME: ${VMAUTH_READER_USERNAME}
+      VMAUTH_READER_PASSWORD: ${VMAUTH_READER_PASSWORD}
+    volumes: [./vmauth.yml:/etc/vmauth/auth.yml:ro]
+
+volumes:
+  vmstorage:
