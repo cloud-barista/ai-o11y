@@ -9,8 +9,8 @@ Wants=network-online.target
 # /dev/kfd), XID counting reads /dev/kmsg, and the process scraper reads every
 # process under /proc.
 User=root
-# The write account's password, AIO11Y_WRITE_PASSWORD. Optional: a backend
-# without basic auth needs none.
+# The write account's password, AIO11Y_WRITE_PASSWORD, or the write token,
+# AIO11Y_WRITE_TOKEN. Optional: a backend that takes neither needs none.
 EnvironmentFile=-/etc/aio11y-otelcol/env
 ExecStart=/usr/local/bin/aio11y-otelcol --config /etc/aio11y-otelcol/config.yaml
 Restart=on-failure

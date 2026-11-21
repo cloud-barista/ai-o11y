@@ -24,9 +24,12 @@ func TestRenderedConfigValidates(t *testing.T) {
 	account := &monitoring.BasicAuth{Username: "writer", PasswordEnv: WritePasswordEnv}
 	authed := []monitoring.Endpoint{{URL: failover[0].URL, BasicAuth: account}}
 	authedTwo := []monitoring.Endpoint{{URL: twoTraces[0].URL, BasicAuth: account}, {URL: twoTraces[1].URL, BasicAuth: account}}
+	bearerCA := monitoring.Endpoint{BearerTokenEnv: WriteTokenEnv, TLS: &monitoring.EndpointTLS{CAPEM: writeCA(t)}}
+	bearerInsecure := monitoring.Endpoint{BearerTokenEnv: WriteTokenEnv, TLS: &monitoring.EndpointTLS{InsecureSkipVerify: true}}
 	endpoints := map[string][]monitoring.Endpoint{
 		"failover vm": failover, "write-all vm": failover, "write-all gpu vm": failover, "account vm": authed,
 		"signals failover vm": failover, "signals write-all vm": failover,
+		"bearer ca failover vm": withAccess(failover, bearerCA), "bearer insecure write-all vm": withAccess(failover, bearerInsecure),
 	}
 	opts := map[string]Options{
 		"write-all vm":         {WriteMode: WriteAll},
@@ -35,10 +38,17 @@ func TestRenderedConfigValidates(t *testing.T) {
 		"signals failover vm":  {LogsEndpoints: twoLogs, TracesEndpoints: authedTwo},
 		"signals write-all vm": {WriteMode: WriteAll, LogsEndpoints: twoLogs, TracesEndpoints: authedTwo},
 		"signals windows vm":   {LogsEndpoints: logsEndpoint, TracesEndpoints: tracesEndpoint},
+		"bearer ca failover vm": {
+			LogsEndpoints: withAccess(twoLogs, bearerCA), TracesEndpoints: withAccess(twoTraces, bearerCA),
+		},
+		"bearer insecure write-all vm": {
+			WriteMode: WriteAll, LogsEndpoints: withAccess(twoLogs, bearerInsecure), TracesEndpoints: withAccess(tracesEndpoint, bearerInsecure),
+		},
 	}
 	for name, target := range map[string]monitoring.Target{
 		"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM(), "amd gpu vm": amdGPUVM(), "failover vm": vm(), "write-all vm": vm(), "write-all gpu vm": gpuVM(), "account vm": vm(),
 		"signals vm": vm(), "signals failover vm": vm(), "signals write-all vm": vm(), "signals windows vm": windows,
+		"bearer ca failover vm": vm(), "bearer insecure write-all vm": vm(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			ep := endpoint
@@ -55,7 +65,11 @@ func TestRenderedConfigValidates(t *testing.T) {
 			if err := os.WriteFile(path, out, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if msg, err := exec.Command(bin, "validate", "--config", path).CombinedOutput(); err != nil {
+			// The collector refuses an empty bearer token, so the token
+			// variable is set as it is on an installed host.
+			cmd := exec.Command(bin, "validate", "--config", path)
+			cmd.Env = append(os.Environ(), WriteTokenEnv+"=change-me")
+			if msg, err := cmd.CombinedOutput(); err != nil {
 				t.Errorf("collector refused the rendered configuration: %v\n%s", err, msg)
 			}
 		})

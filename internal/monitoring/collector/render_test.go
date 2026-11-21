@@ -765,3 +765,153 @@ func TestRenderSignalRejects(t *testing.T) {
 		}
 	}
 }
+
+// writeCA reads the test CA, a certificate made for these tests only.
+func writeCA(t *testing.T) string {
+	t.Helper()
+	pem, err := os.ReadFile(filepath.Join("testdata", "write-ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem)
+}
+
+// withAccess is in with every endpoint written to as access says, URL kept.
+func withAccess(in []monitoring.Endpoint, access monitoring.Endpoint) []monitoring.Endpoint {
+	out := make([]monitoring.Endpoint, len(in))
+	for i, e := range in {
+		out[i] = access
+		out[i].URL = e.URL
+	}
+	return out
+}
+
+// TestRenderBearerCASnapshot pins two endpoints per signal in failover, each
+// signed with a bearer token from the environment and verified against a
+// private CA given inline.
+func TestRenderBearerCASnapshot(t *testing.T) {
+	access := monitoring.Endpoint{BearerTokenEnv: WriteTokenEnv, TLS: &monitoring.EndpointTLS{CAPEM: writeCA(t)}}
+	got, err := Render(vm(), kinds, builtin(t), withAccess(failover, access), Options{
+		LogsEndpoints:   withAccess(twoLogs, access),
+		TracesEndpoints: withAccess(twoTraces, access),
+	})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	checkGolden(t, "vm-logs-traces-failover-bearer-ca.golden.yaml", got)
+}
+
+// TestRenderBearerTLS: with a bearer token and a CA, every exporter of every
+// signal, in either mode and with one endpoint or several, has a bearer token
+// extension of its own, named as the basic auth one would be, whose token is
+// an environment reference, and the CA inline; no basic auth extension is
+// rendered. insecure_skip_verify is rendered only when asked for.
+func TestRenderBearerTLS(t *testing.T) {
+	ca := writeCA(t)
+	for _, tc := range []struct {
+		name   string
+		access monitoring.Endpoint
+		tls    map[string]any
+	}{
+		{"ca", monitoring.Endpoint{BearerTokenEnv: WriteTokenEnv, TLS: &monitoring.EndpointTLS{CAPEM: ca}}, map[string]any{"ca_pem": ca}},
+		{"insecure", monitoring.Endpoint{BearerTokenEnv: WriteTokenEnv, TLS: &monitoring.EndpointTLS{InsecureSkipVerify: true}}, map[string]any{"insecure_skip_verify": true}},
+		{"no tls", monitoring.Endpoint{BearerTokenEnv: WriteTokenEnv}, nil},
+	} {
+		for _, mode := range []WriteMode{WriteFailover, WriteAll} {
+			for _, several := range []bool{false, true} {
+				metrics, logs, traces := endpoint, logsEndpoint, tracesEndpoint
+				suffixes := []string{""}
+				if several {
+					metrics, logs, traces = failover, twoLogs, twoTraces
+					suffixes = []string{"0", "1"}
+				}
+				out, err := Render(vm(), kinds, builtin(t), withAccess(metrics, tc.access), Options{
+					WriteMode:       mode,
+					LogsEndpoints:   withAccess(logs, tc.access),
+					TracesEndpoints: withAccess(traces, tc.access),
+				})
+				if err != nil {
+					t.Fatalf("%s %s several=%v: Render: %v", tc.name, mode, several, err)
+				}
+				var cfg signalsConfig
+				if err := yaml.Unmarshal(out, &cfg); err != nil {
+					t.Fatal(err)
+				}
+				want := map[string]string{}
+				for _, sig := range []string{"metrics", "logs", "traces"} {
+					for _, n := range suffixes {
+						var id string
+						switch {
+						case sig == "metrics" && n == "":
+						case sig == "metrics":
+							id = "/" + n
+						case n == "":
+							id = "/" + sig
+						default:
+							id = "/" + sig + "_" + n
+						}
+						want[ExporterOTLPHTTP+id] = ExtensionBearerTokenAuth + id
+					}
+				}
+				if len(cfg.Exporters) != len(want) {
+					t.Errorf("%s %s several=%v: %d exporters, want %d", tc.name, mode, several, len(cfg.Exporters), len(want))
+				}
+				for exporter, authID := range want {
+					e := cfg.Exporters[exporter]
+					auth, _ := e["auth"].(map[string]any)
+					if auth["authenticator"] != authID || !reflect.DeepEqual(cfg.Extensions[authID], map[string]any{"token": "${env:" + WriteTokenEnv + "}"}) {
+						t.Errorf("%s %s several=%v: %s: auth %v, %s %v", tc.name, mode, several, exporter, auth, authID, cfg.Extensions[authID])
+					}
+					tls, _ := e["tls"].(map[string]any)
+					if !reflect.DeepEqual(tls, tc.tls) {
+						t.Errorf("%s %s several=%v: %s: tls %v, want %v", tc.name, mode, several, exporter, tls, tc.tls)
+					}
+				}
+				for id := range cfg.Extensions {
+					if strings.HasPrefix(id, ExtensionBasicAuth) {
+						t.Errorf("%s %s several=%v: basic auth extension %s rendered", tc.name, mode, several, id)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestRenderWriteAccountTLS: the CA goes with a basic auth account as well,
+// and an endpoint with both an account and a bearer token is refused, of any
+// signal.
+func TestRenderWriteAccountTLS(t *testing.T) {
+	ca := writeCA(t)
+	account := monitoring.Endpoint{
+		BasicAuth: &monitoring.BasicAuth{Username: "writer", PasswordEnv: WritePasswordEnv},
+		TLS:       &monitoring.EndpointTLS{CAPEM: ca},
+	}
+	out, err := Render(vm(), kinds, builtin(t), withAccess(endpoint, account), Options{})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var cfg signalsConfig
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	e := cfg.Exporters[ExporterOTLPHTTP]
+	auth, _ := e["auth"].(map[string]any)
+	tls, _ := e["tls"].(map[string]any)
+	if auth["authenticator"] != ExtensionBasicAuth || tls["ca_pem"] != ca {
+		t.Errorf("exporter %v", e)
+	}
+	both := account
+	both.BearerTokenEnv = WriteTokenEnv
+	for name, tc := range map[string]struct {
+		metrics []monitoring.Endpoint
+		opts    Options
+	}{
+		"metrics": {withAccess(endpoint, both), Options{}},
+		"logs":    {endpoint, Options{LogsEndpoints: withAccess(logsEndpoint, both)}},
+		"traces":  {endpoint, Options{TracesEndpoints: withAccess(twoTraces, both), WriteMode: WriteAll}},
+	} {
+		if _, err := Render(vm(), kinds, builtin(t), tc.metrics, tc.opts); err == nil {
+			t.Errorf("%s: an endpoint with both an account and a bearer token rendered", name)
+		}
+	}
+}

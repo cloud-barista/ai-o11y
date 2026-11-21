@@ -38,6 +38,24 @@ func TestQueryBasicAndBearerRefused(t *testing.T) {
 	}
 }
 
+func TestWriteBasicAndBearerRefused(t *testing.T) {
+	t.Setenv("AIO11Y_BACKEND_WRITE_USERNAME", "writer")
+	t.Setenv("AIO11Y_BACKEND_WRITE_BEARER", "true")
+	if _, err := Load(); err == nil {
+		t.Error("a write account and a write bearer token loaded together")
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_USERNAME", "")
+	cfg, err := Load()
+	if err != nil || !cfg.Backend.WriteBearer {
+		t.Errorf("Load = %+v, %v, want the bearer token alone", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_BEARER", "")
+	cfg, err = Load()
+	if err != nil || cfg.Backend.WriteBearer || cfg.Backend.WriteTLSInsecureSkipVerify || cfg.Backend.WriteTLSCAFile != "" {
+		t.Errorf("Load = %+v, %v, want no bearer token, CA or insecure skip verify by default", cfg, err)
+	}
+}
+
 func TestBackendTimeouts(t *testing.T) {
 	t.Setenv("AIO11Y_BACKEND_TIMEOUT", "")
 	t.Setenv("AIO11Y_BACKEND_CONNECT_TIMEOUT", "3s")
@@ -146,6 +164,9 @@ func TestTemplateVariablesLoad(t *testing.T) {
 		"AIO11Y_BACKEND_QUERY_BEARER_TOKEN":             {"read-token", func(c *Config) any { return c.Backend.QueryBearerToken }, "read-token", []string{"AIO11Y_BACKEND_QUERY_USERNAME", "AIO11Y_BACKEND_QUERY_PASSWORD"}},
 		"AIO11Y_BACKEND_QUERY_TLS_CA_FILE":              {" /etc/aio11y/ca.pem ", func(c *Config) any { return c.Backend.QueryTLSCAFile }, "/etc/aio11y/ca.pem", nil},
 		"AIO11Y_BACKEND_QUERY_TLS_INSECURE_SKIP_VERIFY": {"true", func(c *Config) any { return c.Backend.QueryTLSInsecureSkipVerify }, true, nil},
+		"AIO11Y_BACKEND_WRITE_BEARER":                   {"true", func(c *Config) any { return c.Backend.WriteBearer }, true, []string{"AIO11Y_BACKEND_WRITE_USERNAME"}},
+		"AIO11Y_BACKEND_WRITE_TLS_CA_FILE":              {" /etc/aio11y/write-ca.pem ", func(c *Config) any { return c.Backend.WriteTLSCAFile }, "/etc/aio11y/write-ca.pem", nil},
+		"AIO11Y_BACKEND_WRITE_TLS_INSECURE_SKIP_VERIFY": {"true", func(c *Config) any { return c.Backend.WriteTLSInsecureSkipVerify }, true, nil},
 		"AIO11Y_COLLECTOR_TELEMETRY_PORT":               {"8888", func(c *Config) any { return c.Collector.TelemetryPort }, 8888, nil},
 		"AIO11Y_COLLECTOR_STORAGE_DIR":                  {"/srv/queue", func(c *Config) any { return c.Collector.StorageDir }, "/srv/queue", nil},
 	}

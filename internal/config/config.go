@@ -89,6 +89,19 @@ type BackendConfig struct {
 	// password is not set here: each collector reads it from its own host's
 	// environment.
 	WriteUsername string
+	// WriteBearer makes collectors write with a bearer token, such as the
+	// write token of a proxy in front of the backend. The token is not set
+	// here: each collector reads it from its own host's environment. It
+	// cannot be set together with WriteUsername.
+	WriteBearer bool
+	// WriteTLSCAFile is a PEM file of the CAs collectors verify https write
+	// addresses against instead of their host's, such as a private CA. It is
+	// read at startup and rendered into the collector configuration, so a
+	// file that cannot be read fails startup.
+	WriteTLSCAFile string
+	// WriteTLSInsecureSkipVerify makes collectors accept any certificate
+	// from a write address. Off by default; on is for trying out a setup only.
+	WriteTLSInsecureSkipVerify bool
 }
 
 // Write modes AIO11Y_BACKEND_WRITE_MODE selects.
@@ -157,6 +170,8 @@ func Load() (*Config, error) {
 	v.SetDefault("backend.partial_response", false)
 	v.SetDefault("backend.write_mode", WriteFailover)
 	v.SetDefault("backend.query_tls_insecure_skip_verify", false)
+	v.SetDefault("backend.write_bearer", false)
+	v.SetDefault("backend.write_tls_insecure_skip_verify", false)
 	v.SetDefault("collector.storage_dir", "/var/lib/aio11y-otelcol/queue")
 
 	// Every key is bound on its own rather than through AutomaticEnv: with it,
@@ -195,6 +210,9 @@ func Load() (*Config, error) {
 		"backend.query_tls_ca_file",
 		"backend.query_tls_insecure_skip_verify",
 		"backend.write_username",
+		"backend.write_bearer",
+		"backend.write_tls_ca_file",
+		"backend.write_tls_insecure_skip_verify",
 		"collector.telemetry_port",
 		"collector.storage_dir",
 	} {
@@ -264,6 +282,10 @@ func Load() (*Config, error) {
 			QueryBearerToken:           v.GetString("backend.query_bearer_token"),
 			QueryTLSCAFile:             strings.TrimSpace(v.GetString("backend.query_tls_ca_file")),
 			QueryTLSInsecureSkipVerify: v.GetBool("backend.query_tls_insecure_skip_verify"),
+
+			WriteBearer:                v.GetBool("backend.write_bearer"),
+			WriteTLSCAFile:             strings.TrimSpace(v.GetString("backend.write_tls_ca_file")),
+			WriteTLSInsecureSkipVerify: v.GetBool("backend.write_tls_insecure_skip_verify"),
 		},
 	}
 	if cfg.Backend.Provider != BackendThanos && cfg.Backend.Provider != BackendVictoria {
@@ -277,6 +299,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Backend.QueryUsername != "" && cfg.Backend.QueryBearerToken != "" {
 		return nil, fmt.Errorf("%s_BACKEND_QUERY_USERNAME and _QUERY_BEARER_TOKEN cannot be set together: a query carries one Authorization header", envPrefix)
+	}
+	if cfg.Backend.WriteUsername != "" && cfg.Backend.WriteBearer {
+		return nil, fmt.Errorf("%s_BACKEND_WRITE_USERNAME and _WRITE_BEARER cannot be set together: a write carries one Authorization header", envPrefix)
 	}
 	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
 		return nil, fmt.Errorf("%s_SERVER_PORT must be between 1 and 65535, got %d", envPrefix, cfg.Server.Port)

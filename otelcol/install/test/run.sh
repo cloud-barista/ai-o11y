@@ -36,6 +36,7 @@ extensions:
       password: ${env:AIO11Y_WRITE_PASSWORD}
       username: writer
 EOF
+cp "$FAKE_CONFIG" "$tmp/served-password.yaml"
 sed 's/FAKE_BUILD/local/' "$here/fake-otelcol" >"$tmp/otelcol-local"
 sed 's/FAKE_BUILD/download/' "$here/fake-otelcol" >"$tmp/otelcol-download"
 chmod 0755 "$tmp/otelcol-local" "$tmp/otelcol-download"
@@ -54,8 +55,9 @@ etc=$AIO11Y_ROOT/etc/aio11y-otelcol
 bin=$AIO11Y_ROOT/usr/local/bin/aio11y-otelcol
 gpm=$AIO11Y_ROOT/usr/local/bin/aio11y-gpm
 unit=$AIO11Y_ROOT/etc/systemd/system/aio11y-otelcol.service
-# A password systemd would read wrongly without the escapes.
+# A password and a token systemd would read wrongly without the escapes.
 password='p"a\s$s`w o#rd'"'"'x'
+token='t"o\k$e`n w#'"'"'1'
 
 failed=0
 check() { # <what> <command...>
@@ -154,6 +156,42 @@ check "the service is not touched" empty "$FAKE_LOG/systemctl.log"
 check "no staged config left" absent "$etc/config.yaml.new"
 sed -i '/INVALID/d' "$FAKE_CONFIG"
 
+echo "-- write token"
+reset_logs
+cat >"$FAKE_CONFIG" <<'EOF'
+exporters:
+  otlp_http/0:
+    auth:
+      authenticator: bearertokenauth/0
+extensions:
+  bearertokenauth/0:
+    token: ${env:AIO11Y_WRITE_TOKEN}
+EOF
+cp "$etc/config.yaml" "$tmp/config.before"
+env_before=$(<"$etc/env")
+check "a configuration reading a token neither set nor saved fails" fails env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN \
+  "$scripts/install.sh" --config-only
+check "no token: says why and that nothing was installed" has "$tmp/out" "neither set nor saved"
+check "no token: config.yaml is unchanged" cmp -s "$tmp/config.before" "$etc/config.yaml"
+check "no token: env is unchanged" [ "$(<"$etc/env")" == "$env_before" ]
+check "no token: the service is not touched" empty "$FAKE_LOG/systemctl.log"
+check "config-only with the token succeeds" run env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN AIO11Y_WRITE_TOKEN="$token" \
+  "$scripts/install.sh" --config-only
+check "installs the token configuration" cmp -s "$FAKE_CONFIG" "$etc/config.yaml"
+check "env is still 0600" mode "$etc/env" 600
+check "env holds the escaped token" has "$etc/env" 'AIO11Y_WRITE_TOKEN="t\"o\\k\$e\`n w#'"'"'1"'
+check "env keeps the saved password" has "$etc/env" 'AIO11Y_WRITE_PASSWORD="p\"a\\s\$s\`w o#rd'"'"'x"'
+check "env holds one line each" [ "$(wc -l <"$etc/env")" == 2 ]
+check "the token is not printed" lacks "$tmp/out" 'n w#'
+check "the token is not in curl's arguments" lacks "$FAKE_LOG/curl.log" 'n w#'
+reset_logs
+env_before=$(<"$etc/env")
+check "config-only with the token saved succeeds" run env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN "$scripts/install.sh" --config-only
+check "token saved: env is kept" [ "$(<"$etc/env")" == "$env_before" ]
+check "token saved: restarts" has "$FAKE_LOG/systemctl.log" "restart aio11y-otelcol"
+check "token saved: no warning" lacks "$tmp/out" "warning"
+cp "$tmp/served-password.yaml" "$FAKE_CONFIG"
+
 echo "-- refusals"
 reset_logs
 check "wrong token fails" fails env AIO11Y_AUTH_TOKEN=wrong \
@@ -165,6 +203,9 @@ check "config-only refuses a GPM helper: says why" has "$tmp/out" "--config-only
 check "a GPM helper that is not a file is refused" fails \
   "$scripts/install.sh" --server "$url" --ns ns01 --infra infra01 --node node01 --gpm-binary "$tmp/missing"
 check "a GPM helper that is not a file: says why" has "$tmp/out" "$tmp/missing is not a file"
+check "a token of two lines is refused" fails env AIO11Y_WRITE_TOKEN=$'a\nb' \
+  "$scripts/install.sh" --server "$url" --ns ns01 --infra infra01 --node node01
+check "a token of two lines: says why" has "$tmp/out" "AIO11Y_WRITE_TOKEN must be one line"
 check "an id with a quote is refused" fails \
   "$scripts/install.sh" --server "$url" --ns 'ns"01' --infra infra01 --node node01
 check "a service that does not stay up fails" fails env AIO11Y_AUTH_TOKEN=$FAKE_TOKEN FAKE_ACTIVE=failed \

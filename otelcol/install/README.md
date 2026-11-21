@@ -18,7 +18,8 @@ download it from) to the VM, and on a VM with NVIDIA GPUs the GPM helper
 ```sh
 export AIO11Y_AUTH_TOKEN=...       # when ai-o11y sets AIO11Y_AUTH_TOKEN
 export AIO11Y_WRITE_PASSWORD=...   # when the backend's write account uses basic auth
-sudo --preserve-env=AIO11Y_AUTH_TOKEN,AIO11Y_WRITE_PASSWORD ./install.sh \
+export AIO11Y_WRITE_TOKEN=...      # or when the backend takes a write bearer token
+sudo --preserve-env=AIO11Y_AUTH_TOKEN,AIO11Y_WRITE_PASSWORD,AIO11Y_WRITE_TOKEN ./install.sh \
   --server http://ai-o11y:8094 --ns ns01 --infra infra01 --node node01 \
   --binary ./aio11y-otelcol --gpm-binary ./aio11y-gpm
 ```
@@ -26,14 +27,22 @@ sudo --preserve-env=AIO11Y_AUTH_TOKEN,AIO11Y_WRITE_PASSWORD ./install.sh \
 `--binary-url <URL>` downloads the collector instead of `--binary`.
 `--gpm-binary` is optional and only of use on a VM with NVIDIA GPUs.
 
-The token and the password are read from the environment only, never from
-arguments, so they do not show in the process list. The token goes to curl in a
-header file, and the password is written to `/etc/aio11y-otelcol/env` and never
-printed.
+The tokens and the password are read from the environment only, never from
+arguments, so they do not show in the process list. `AIO11Y_AUTH_TOKEN` goes to
+curl in a header file, and the write password and token are written to
+`/etc/aio11y-otelcol/env` and never printed.
+
+A configuration that writes with a bearer token reads `AIO11Y_WRITE_TOKEN`,
+and the collector does not start without it: when it is neither given nor
+saved by an earlier install, `install.sh` stops before installing anything.
+A configuration that writes with an account and has no password only gets a
+warning, since the collector starts and every write is refused. A private CA
+of the backend's write addresses comes inside the configuration ai-o11y
+renders (`AIO11Y_BACKEND_WRITE_TLS_CA_FILE`), so nothing is installed for it.
 
 | Command | What |
 |---|---|
-| `install.sh --server ... --ns ... --infra ... --node ... --binary ...` | Install, or install again: the VM is registered again (its description is replaced, its id stays), and the binary, configuration and unit are replaced. Without `--binary`/`--binary-url` the installed binary is kept, and without `--gpm-binary` the installed GPM helper, if any; without `--server` the one saved at install is used. Without `AIO11Y_WRITE_PASSWORD` the saved password is kept. |
+| `install.sh --server ... --ns ... --infra ... --node ... --binary ...` | Install, or install again: the VM is registered again (its description is replaced, its id stays), and the binary, configuration and unit are replaced. Without `--binary`/`--binary-url` the installed binary is kept, and without `--gpm-binary` the installed GPM helper, if any; without `--server` the one saved at install is used. Without `AIO11Y_WRITE_PASSWORD` or `AIO11Y_WRITE_TOKEN` the saved one is kept. |
 | `install.sh --config-only` | Fetch the configuration again, as after a change of the backend or the collectors, check it and restart. No registration, binary or unit change. |
 | `uninstall.sh` | Stop and delete the service, its binaries, configuration and disk queue. The target stays registered. |
 | `uninstall.sh --deregister` | Also delete the target from ai-o11y (`DELETE /aio11y/targets/{targetId}`); its stored series stay in the backend. When ai-o11y refuses, nothing is removed. A target ai-o11y no longer has counts as deleted. |
@@ -45,7 +54,7 @@ printed.
 | `/usr/local/bin/aio11y-otelcol` | The collector. |
 | `/usr/local/bin/aio11y-gpm` | The GPM helper ([otelcol/cmd/aio11y-gpm](../cmd/aio11y-gpm/README.md)), with `--gpm-binary`. The NVIDIA GPU receiver looks for it next to the collector and runs it each collection to read NVML GPM, which gives SM utilization per MIG instance on Hopper and later GPUs. Without it those values are left out and the rest is collected as before. |
 | `/etc/aio11y-otelcol/config.yaml` | The configuration ai-o11y rendered for the VM (0640). |
-| `/etc/aio11y-otelcol/env` | `AIO11Y_WRITE_PASSWORD`, which the configuration reads as `${env:AIO11Y_WRITE_PASSWORD}` (0600). Absent when no password was given. |
+| `/etc/aio11y-otelcol/env` | `AIO11Y_WRITE_PASSWORD` and `AIO11Y_WRITE_TOKEN`, each when given, which the configuration reads as `${env:AIO11Y_WRITE_PASSWORD}` or `${env:AIO11Y_WRITE_TOKEN}` (0600). Absent when neither was given. |
 | `/etc/aio11y-otelcol/target-id`, `server` | The target id and the ai-o11y address, for `--config-only` and `uninstall.sh --deregister`. |
 | `/etc/systemd/system/aio11y-otelcol.service` | The unit ([aio11y-otelcol.service](aio11y-otelcol.service)). |
 | `/var/lib/aio11y-otelcol` | The service's state directory (systemd `StateDirectory`), where the exporters keep their disk queue and the journald receiver its cursor. |

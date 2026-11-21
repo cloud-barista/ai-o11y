@@ -1,0 +1,313 @@
+connectors:
+    failover:
+        priority_levels:
+            - - metrics/0
+            - - metrics/1
+        retry_interval: 30s
+    failover/logs:
+        priority_levels:
+            - - logs/0
+            - - logs/1
+        retry_interval: 30s
+    failover/traces:
+        priority_levels:
+            - - traces/0
+            - - traces/1
+        retry_interval: 30s
+exporters:
+    otlp_http/0:
+        auth:
+            authenticator: bearertokenauth/0
+        metrics_endpoint: http://vmauth-1:8427/opentelemetry/v1/metrics
+        retry_on_failure:
+            enabled: false
+        sending_queue:
+            enabled: false
+        tls:
+            ca_pem: |
+                -----BEGIN CERTIFICATE-----
+                MIIBaDCCAQ6gAwIBAgIUFdWxp/+fgPDn24H1MANX1EvPyR8wCgYIKoZIzj0EAwIw
+                GjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMB4XDTI2MTEyMTEwNDkyOVoXDTM2
+                MTExODEwNDkyOVowGjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMFkwEwYHKoZI
+                zj0CAQYIKoZIzj0DAQcDQgAEhnOvSDysuAUHemG6ZXzKtILU/3lZkd/+81rhLznp
+                DMq5aB++r3ca/PUbjUMMQVztoEGDeSaxZOZ9BrnUuhzXxqMyMDAwHQYDVR0OBBYE
+                FOlU7AMfoNyjNPSUEAgfd8pUDwq4MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0E
+                AwIDSAAwRQIgeg3tZFQZtSgp6pt9Zgo6kfCbt1T67IEklK8FD0Gg0IsCIQDKfs7H
+                /d9nzClaSQduuEVcf6uzNayhsGb7PueuRN3crg==
+                -----END CERTIFICATE-----
+    otlp_http/1:
+        auth:
+            authenticator: bearertokenauth/1
+        metrics_endpoint: http://vmauth-2:8427/opentelemetry/v1/metrics
+        retry_on_failure:
+            enabled: true
+            max_elapsed_time: 0s
+        sending_queue:
+            enabled: true
+            num_consumers: 1
+            queue_size: 268435456
+            sizer: bytes
+            storage: file_storage/queue
+        tls:
+            ca_pem: |
+                -----BEGIN CERTIFICATE-----
+                MIIBaDCCAQ6gAwIBAgIUFdWxp/+fgPDn24H1MANX1EvPyR8wCgYIKoZIzj0EAwIw
+                GjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMB4XDTI2MTEyMTEwNDkyOVoXDTM2
+                MTExODEwNDkyOVowGjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMFkwEwYHKoZI
+                zj0CAQYIKoZIzj0DAQcDQgAEhnOvSDysuAUHemG6ZXzKtILU/3lZkd/+81rhLznp
+                DMq5aB++r3ca/PUbjUMMQVztoEGDeSaxZOZ9BrnUuhzXxqMyMDAwHQYDVR0OBBYE
+                FOlU7AMfoNyjNPSUEAgfd8pUDwq4MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0E
+                AwIDSAAwRQIgeg3tZFQZtSgp6pt9Zgo6kfCbt1T67IEklK8FD0Gg0IsCIQDKfs7H
+                /d9nzClaSQduuEVcf6uzNayhsGb7PueuRN3crg==
+                -----END CERTIFICATE-----
+    otlp_http/logs_0:
+        auth:
+            authenticator: bearertokenauth/logs_0
+        logs_endpoint: http://vl-a:9428/insert/opentelemetry/v1/logs
+        retry_on_failure:
+            enabled: false
+        sending_queue:
+            enabled: false
+        tls:
+            ca_pem: |
+                -----BEGIN CERTIFICATE-----
+                MIIBaDCCAQ6gAwIBAgIUFdWxp/+fgPDn24H1MANX1EvPyR8wCgYIKoZIzj0EAwIw
+                GjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMB4XDTI2MTEyMTEwNDkyOVoXDTM2
+                MTExODEwNDkyOVowGjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMFkwEwYHKoZI
+                zj0CAQYIKoZIzj0DAQcDQgAEhnOvSDysuAUHemG6ZXzKtILU/3lZkd/+81rhLznp
+                DMq5aB++r3ca/PUbjUMMQVztoEGDeSaxZOZ9BrnUuhzXxqMyMDAwHQYDVR0OBBYE
+                FOlU7AMfoNyjNPSUEAgfd8pUDwq4MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0E
+                AwIDSAAwRQIgeg3tZFQZtSgp6pt9Zgo6kfCbt1T67IEklK8FD0Gg0IsCIQDKfs7H
+                /d9nzClaSQduuEVcf6uzNayhsGb7PueuRN3crg==
+                -----END CERTIFICATE-----
+    otlp_http/logs_1:
+        auth:
+            authenticator: bearertokenauth/logs_1
+        logs_endpoint: http://vl-b:9428/insert/opentelemetry/v1/logs
+        retry_on_failure:
+            enabled: true
+            max_elapsed_time: 0s
+        sending_queue:
+            enabled: true
+            num_consumers: 1
+            queue_size: 268435456
+            sizer: bytes
+            storage: file_storage/queue_logs
+        tls:
+            ca_pem: |
+                -----BEGIN CERTIFICATE-----
+                MIIBaDCCAQ6gAwIBAgIUFdWxp/+fgPDn24H1MANX1EvPyR8wCgYIKoZIzj0EAwIw
+                GjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMB4XDTI2MTEyMTEwNDkyOVoXDTM2
+                MTExODEwNDkyOVowGjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMFkwEwYHKoZI
+                zj0CAQYIKoZIzj0DAQcDQgAEhnOvSDysuAUHemG6ZXzKtILU/3lZkd/+81rhLznp
+                DMq5aB++r3ca/PUbjUMMQVztoEGDeSaxZOZ9BrnUuhzXxqMyMDAwHQYDVR0OBBYE
+                FOlU7AMfoNyjNPSUEAgfd8pUDwq4MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0E
+                AwIDSAAwRQIgeg3tZFQZtSgp6pt9Zgo6kfCbt1T67IEklK8FD0Gg0IsCIQDKfs7H
+                /d9nzClaSQduuEVcf6uzNayhsGb7PueuRN3crg==
+                -----END CERTIFICATE-----
+    otlp_http/traces_0:
+        auth:
+            authenticator: bearertokenauth/traces_0
+        retry_on_failure:
+            enabled: false
+        sending_queue:
+            enabled: false
+        tls:
+            ca_pem: |
+                -----BEGIN CERTIFICATE-----
+                MIIBaDCCAQ6gAwIBAgIUFdWxp/+fgPDn24H1MANX1EvPyR8wCgYIKoZIzj0EAwIw
+                GjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMB4XDTI2MTEyMTEwNDkyOVoXDTM2
+                MTExODEwNDkyOVowGjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMFkwEwYHKoZI
+                zj0CAQYIKoZIzj0DAQcDQgAEhnOvSDysuAUHemG6ZXzKtILU/3lZkd/+81rhLznp
+                DMq5aB++r3ca/PUbjUMMQVztoEGDeSaxZOZ9BrnUuhzXxqMyMDAwHQYDVR0OBBYE
+                FOlU7AMfoNyjNPSUEAgfd8pUDwq4MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0E
+                AwIDSAAwRQIgeg3tZFQZtSgp6pt9Zgo6kfCbt1T67IEklK8FD0Gg0IsCIQDKfs7H
+                /d9nzClaSQduuEVcf6uzNayhsGb7PueuRN3crg==
+                -----END CERTIFICATE-----
+        traces_endpoint: http://vt-a:10428/insert/opentelemetry/v1/traces
+    otlp_http/traces_1:
+        auth:
+            authenticator: bearertokenauth/traces_1
+        retry_on_failure:
+            enabled: true
+            max_elapsed_time: 0s
+        sending_queue:
+            enabled: true
+            num_consumers: 1
+            queue_size: 268435456
+            sizer: bytes
+            storage: file_storage/queue_traces
+        tls:
+            ca_pem: |
+                -----BEGIN CERTIFICATE-----
+                MIIBaDCCAQ6gAwIBAgIUFdWxp/+fgPDn24H1MANX1EvPyR8wCgYIKoZIzj0EAwIw
+                GjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMB4XDTI2MTEyMTEwNDkyOVoXDTM2
+                MTExODEwNDkyOVowGjEYMBYGA1UEAwwPYWktbzExeSB0ZXN0IENBMFkwEwYHKoZI
+                zj0CAQYIKoZIzj0DAQcDQgAEhnOvSDysuAUHemG6ZXzKtILU/3lZkd/+81rhLznp
+                DMq5aB++r3ca/PUbjUMMQVztoEGDeSaxZOZ9BrnUuhzXxqMyMDAwHQYDVR0OBBYE
+                FOlU7AMfoNyjNPSUEAgfd8pUDwq4MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0E
+                AwIDSAAwRQIgeg3tZFQZtSgp6pt9Zgo6kfCbt1T67IEklK8FD0Gg0IsCIQDKfs7H
+                /d9nzClaSQduuEVcf6uzNayhsGb7PueuRN3crg==
+                -----END CERTIFICATE-----
+        traces_endpoint: http://vt-b:10428/insert/opentelemetry/v1/traces
+extensions:
+    bearertokenauth/0:
+        token: ${env:AIO11Y_WRITE_TOKEN}
+    bearertokenauth/1:
+        token: ${env:AIO11Y_WRITE_TOKEN}
+    bearertokenauth/logs_0:
+        token: ${env:AIO11Y_WRITE_TOKEN}
+    bearertokenauth/logs_1:
+        token: ${env:AIO11Y_WRITE_TOKEN}
+    bearertokenauth/traces_0:
+        token: ${env:AIO11Y_WRITE_TOKEN}
+    bearertokenauth/traces_1:
+        token: ${env:AIO11Y_WRITE_TOKEN}
+    file_storage/journald:
+        create_directory: true
+        directory: /var/lib/aio11y-otelcol/queue/journald
+    file_storage/queue:
+        create_directory: true
+        directory: /var/lib/aio11y-otelcol/queue
+    file_storage/queue_logs:
+        create_directory: true
+        directory: /var/lib/aio11y-otelcol/queue/logs
+    file_storage/queue_traces:
+        create_directory: true
+        directory: /var/lib/aio11y-otelcol/queue/traces
+processors:
+    attributes/identity:
+        actions:
+            - action: upsert
+              key: entity_id
+              value: d44ikdomt0tac4ejrmmg
+    batch: {}
+    memory_limiter:
+        check_interval: 1s
+        limit_mib: 400
+        spike_limit_mib: 100
+    top_process:
+        by:
+            - cpu
+            - memory
+        top_n: 10
+receivers:
+    host_metrics:
+        collection_interval: 30s
+        scrapers:
+            cpu:
+                metrics:
+                    system.cpu.physical.count:
+                        enabled: true
+            disk: {}
+            filesystem: {}
+            load: {}
+            memory:
+                metrics:
+                    system.linux.memory.available:
+                        enabled: true
+                    system.memory.limit:
+                        enabled: true
+                    system.memory.linux.shared:
+                        enabled: true
+                    system.memory.utilization:
+                        enabled: true
+            network: {}
+            paging: {}
+            process:
+                metrics:
+                    process.cpu.utilization:
+                        enabled: true
+                    process.memory.utilization:
+                        enabled: true
+                mute_process_cgroup_error: true
+                mute_process_exe_error: true
+                mute_process_io_error: true
+                mute_process_name_error: true
+                mute_process_user_error: true
+            processes: {}
+            system: {}
+    journald:
+        convert_to_semantic_conventions: true
+        start_at: end
+        storage: file_storage/journald
+    otlp:
+        protocols:
+            grpc:
+                endpoint: 127.0.0.1:4317
+            http:
+                endpoint: 127.0.0.1:4318
+service:
+    extensions:
+        - bearertokenauth/0
+        - bearertokenauth/1
+        - bearertokenauth/logs_0
+        - bearertokenauth/logs_1
+        - bearertokenauth/traces_0
+        - bearertokenauth/traces_1
+        - file_storage/journald
+        - file_storage/queue
+        - file_storage/queue_logs
+        - file_storage/queue_traces
+    pipelines:
+        logs:
+            exporters:
+                - failover/logs
+            processors:
+                - memory_limiter
+                - attributes/identity
+                - batch
+            receivers:
+                - journald
+        logs/0:
+            exporters:
+                - otlp_http/logs_0
+            receivers:
+                - failover/logs
+        logs/1:
+            exporters:
+                - otlp_http/logs_1
+            receivers:
+                - failover/logs
+        metrics:
+            exporters:
+                - failover
+            processors:
+                - memory_limiter
+                - top_process
+                - attributes/identity
+                - batch
+            receivers:
+                - host_metrics
+        metrics/0:
+            exporters:
+                - otlp_http/0
+            receivers:
+                - failover
+        metrics/1:
+            exporters:
+                - otlp_http/1
+            receivers:
+                - failover
+        traces:
+            exporters:
+                - failover/traces
+            processors:
+                - memory_limiter
+                - attributes/identity
+                - batch
+            receivers:
+                - otlp
+        traces/0:
+            exporters:
+                - otlp_http/traces_0
+            receivers:
+                - failover/traces
+        traces/1:
+            exporters:
+                - otlp_http/traces_1
+            receivers:
+                - failover/traces
+    telemetry:
+        metrics:
+            level: none

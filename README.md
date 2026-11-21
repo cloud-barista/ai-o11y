@@ -141,11 +141,17 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   (`AIO11Y_BACKEND_QUERY_USERNAME`, `_QUERY_PASSWORD`) or a bearer token
   (`AIO11Y_BACKEND_QUERY_BEARER_TOKEN`), not both; https query addresses are
   verified against the system's CAs or `AIO11Y_BACKEND_QUERY_TLS_CA_FILE`.
-  Collectors write with basic auth only, the same account for metrics, logs
-  and traces, and read the write account's password from
-  `AIO11Y_WRITE_PASSWORD` on their host; a collector without it still starts,
-  and every write is refused. Over plain HTTP the accounts travel in clear
-  text; outside a private network the backend needs TLS in front.
+  Collectors write with a basic auth account (`AIO11Y_BACKEND_WRITE_USERNAME`)
+  or a bearer token (`AIO11Y_BACKEND_WRITE_BEARER=true`), not both, the same
+  for metrics, logs and traces. ai-o11y knows neither the password nor the
+  token: collectors read them from `AIO11Y_WRITE_PASSWORD` or
+  `AIO11Y_WRITE_TOKEN` on their host. A collector without the password still
+  starts, and every write is refused; one without the token does not start.
+  https write addresses are verified against each collector host's CAs or
+  `AIO11Y_BACKEND_WRITE_TLS_CA_FILE`, which ai-o11y reads at startup and puts
+  into the rendered configuration, so the CA need not be installed on the
+  hosts. Over plain HTTP the accounts and tokens travel in clear text; outside
+  a private network the backend needs TLS in front.
 - **Metric catalog**: see the known limits in
   [docs/metric-catalog.md](docs/metric-catalog.md).
 

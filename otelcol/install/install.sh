@@ -3,7 +3,7 @@
 # aio11y-otelcol: registers the VM as a target, fetches its collector
 # configuration, checks it with the collector and starts the service.
 #
-#   sudo --preserve-env=AIO11Y_AUTH_TOKEN,AIO11Y_WRITE_PASSWORD ./install.sh \
+#   sudo --preserve-env=AIO11Y_AUTH_TOKEN,AIO11Y_WRITE_PASSWORD,AIO11Y_WRITE_TOKEN ./install.sh \
 #     --server http://ai-o11y:8094 --ns ns01 --infra infra01 --node node01 \
 #     --binary ./aio11y-otelcol          (or --binary-url <URL>)
 #
@@ -29,13 +29,17 @@
 #   AIO11Y_WRITE_PASSWORD  the backend write account's password, when the
 #                          backend uses basic auth; kept from the last install
 #                          when not given
+#   AIO11Y_WRITE_TOKEN     the backend's write token, when the backend uses a
+#                          bearer token; kept from the last install when not
+#                          given. Without it such a configuration is refused:
+#                          the collector does not start without its token
 #
 # Secrets are read from the environment only, so they never show in the
 # process list. Installing again registers the VM again, which replaces its
 # description, and replaces the binary, configuration and unit.
 set -euo pipefail
 
-usage() { sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "install.sh: $*" >&2; exit 1; }
 
 server='' ns='' infra='' node='' binary='' binary_url='' gpm_binary='' config_only=false
@@ -93,9 +97,13 @@ fi
 [[ -n $server || ! -f $server_file ]] || server=$(<"$server_file")
 [[ -n $server ]] || die "--server is required"
 server=${server%/}
-if [[ -n ${AIO11Y_WRITE_PASSWORD:-} && $AIO11Y_WRITE_PASSWORD == *$'\n'* ]]; then
-  die "AIO11Y_WRITE_PASSWORD must be one line"
-fi
+# The write secrets the configuration reads from the environment, kept in
+# the env file the unit reads.
+write_vars=(AIO11Y_WRITE_PASSWORD AIO11Y_WRITE_TOKEN)
+for v in "${write_vars[@]}"; do
+  [[ ${!v:-} != *$'\n'* ]] || die "$v must be one line"
+done
+saved() { [[ -f $env_file ]] && grep -q "^$1=" "$env_file"; }
 
 umask 077
 work=$(mktemp -d)
@@ -147,7 +155,18 @@ fi
 api -o "$staged_config" "$server/aio11y/targets/$id/collectorConfig" ||
   die "fetching the collector configuration of $id failed"
 chmod 0640 "$staged_config"
-"$run_bin" validate --config "$staged_config" >&2 ||
+# The collector refuses an empty bearer token, so a configuration that reads
+# AIO11Y_WRITE_TOKEN needs it given or saved. A saved one is read by the
+# service only: validate, which checks no more than that it is set, gets a
+# stand-in.
+validate_env=()
+if grep -q 'env:AIO11Y_WRITE_TOKEN' "$staged_config" && [[ -z ${AIO11Y_WRITE_TOKEN:-} ]]; then
+  saved AIO11Y_WRITE_TOKEN ||
+    die "the configuration of $id signs writes with AIO11Y_WRITE_TOKEN, which is neither set nor saved," \
+      "and the collector does not start without it; nothing installed. Run again with AIO11Y_WRITE_TOKEN."
+  validate_env=(AIO11Y_WRITE_TOKEN=saved)
+fi
+env "${validate_env[@]}" "$run_bin" validate --config "$staged_config" >&2 ||
   die "the collector configuration of $id does not validate; nothing installed"
 
 # 3. Install. Renames, so a running collector never reads a half-written file.
@@ -158,18 +177,30 @@ if [[ -n $gpm_binary ]]; then
   mv -f "$staged_gpm" "$gpm_path"
 fi
 mv -f "$staged_config" "$config"
-if [[ -n ${AIO11Y_WRITE_PASSWORD:-} ]]; then
-  # systemd's EnvironmentFile reads a double-quoted value with \\ \" \$ \`
-  # escaped.
-  v=${AIO11Y_WRITE_PASSWORD//\\/\\\\}
-  v=${v//\"/\\\"}
-  v=${v//\$/\\\$}
-  v=${v//\`/\\\`}
-  printf 'AIO11Y_WRITE_PASSWORD="%s"\n' "$v" >"$env_file.new"
+# A secret given replaces its saved line; one not given keeps it.
+given=false
+: >"$env_file.new"
+for v in "${write_vars[@]}"; do
+  if [[ -n ${!v:-} ]]; then
+    given=true
+    # systemd's EnvironmentFile reads a double-quoted value with \\ \" \$ \`
+    # escaped.
+    q=${!v}
+    q=${q//\\/\\\\}
+    q=${q//\"/\\\"}
+    q=${q//\$/\\\$}
+    q=${q//\`/\\\`}
+    printf '%s="%s"\n' "$v" "$q" >>"$env_file.new"
+  elif saved "$v"; then
+    grep "^$v=" "$env_file" >>"$env_file.new"
+  fi
+done
+unset q
+if $given; then
   chmod 0600 "$env_file.new"
   mv -f "$env_file.new" "$env_file"
-  unset v
-elif [[ ! -f $env_file ]] && grep -q 'env:AIO11Y_WRITE_PASSWORD' "$config"; then
+fi
+if grep -q 'env:AIO11Y_WRITE_PASSWORD' "$config" && ! saved AIO11Y_WRITE_PASSWORD; then
   echo "warning: the configuration signs writes with AIO11Y_WRITE_PASSWORD, which is not set;" \
     "every write will be refused. Run again with AIO11Y_WRITE_PASSWORD." >&2
 fi

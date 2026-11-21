@@ -60,6 +60,10 @@ const ConnectorFailover = "failover"
 // a basic auth account.
 const ExtensionBasicAuth = "basicauth"
 
+// ExtensionBearerTokenAuth is the extension that signs an exporter's requests
+// with "Authorization: Bearer" and a token.
+const ExtensionBearerTokenAuth = "bearertokenauth"
+
 // JournaldReceiver is the receiver the logs pipeline reads the host's
 // systemd journal with. It runs journalctl, so it needs the journal readable
 // by the collector's user (root in the installed service unit).
@@ -82,6 +86,11 @@ const (
 // WritePasswordEnv is the environment variable on a collector's host that
 // holds the password of the write account (AIO11Y_BACKEND_WRITE_USERNAME).
 const WritePasswordEnv = "AIO11Y_WRITE_PASSWORD"
+
+// WriteTokenEnv is the environment variable on a collector's host that holds
+// the bearer token collectors write with (AIO11Y_BACKEND_WRITE_BEARER). Unlike
+// the password, a collector refuses to start while it is unset or empty.
+const WriteTokenEnv = "AIO11Y_WRITE_TOKEN"
 
 // Render builds the collector configuration for one target: the fragments of
 // every agent-path kind that applies to it, the processor that stamps its
@@ -108,6 +117,9 @@ func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.
 			}
 			if a := e.BasicAuth; a != nil && (a.Username == "" || a.PasswordEnv == "") {
 				return nil, errors.New("collector endpoint account needs a username and a password variable")
+			}
+			if e.BasicAuth != nil && e.BearerTokenEnv != "" {
+				return nil, errors.New("collector endpoint cannot write with both a basic auth account and a bearer token")
 			}
 		}
 	}
@@ -324,7 +336,7 @@ func exportTo(sig signal, mode WriteMode) (output, error) {
 	if len(sig.endpoints) == 1 {
 		exporter := sig.id(ExporterOTLPHTTP, -1)
 		out := output{heads: []string{exporter}, extensions: map[string]any{storage: queue}}
-		cfg := exporterConfig(sig, sig.endpoints[0], sig.id(ExtensionBasicAuth, -1), out.extensions)
+		cfg := exporterConfig(sig, sig.endpoints[0], -1, out.extensions)
 		keepOnDisk(cfg, storage)
 		out.exporters = map[string]any{exporter: cfg}
 		return out, nil
@@ -334,7 +346,7 @@ func exportTo(sig signal, mode WriteMode) (output, error) {
 		out := output{exporters: map[string]any{}, extensions: map[string]any{storage: queue}}
 		for i, e := range sig.endpoints {
 			exporter := sig.id(ExporterOTLPHTTP, i)
-			cfg := exporterConfig(sig, e, sig.id(ExtensionBasicAuth, i), out.extensions)
+			cfg := exporterConfig(sig, e, i, out.extensions)
 			keepOnDisk(cfg, storage)
 			out.exporters[exporter] = cfg
 			out.heads = append(out.heads, exporter)
@@ -350,7 +362,7 @@ func exportTo(sig signal, mode WriteMode) (output, error) {
 	for i, e := range sig.endpoints {
 		exporter := sig.id(ExporterOTLPHTTP, i)
 		pipeline := fmt.Sprintf("%s/%d", sig.name, i)
-		cfg := exporterConfig(sig, e, sig.id(ExtensionBasicAuth, i), out.extensions)
+		cfg := exporterConfig(sig, e, i, out.extensions)
 		if i == len(sig.endpoints)-1 {
 			keepOnDisk(cfg, storage)
 			out.extensions[storage] = queue
@@ -393,20 +405,40 @@ func keepOnDisk(cfg map[string]any, storage string) {
 // exporterConfig is the exporter that posts the signal to e, every exporter
 // the renderer writes being made here. e.URL is the signal's own endpoint
 // (metrics_endpoint, logs_endpoint, traces_endpoint), used as given. An
-// account adds a basic auth extension under authID to extensions, its
-// password taken from the collector host's environment when the collector
-// starts.
-func exporterConfig(sig signal, e monitoring.Endpoint, authID string, extensions map[string]any) map[string]any {
+// account or a bearer token adds an auth extension to extensions, with the id
+// sig.id gives its kind and i, the exporter's index (-1 for the only one); the
+// password or token is taken from the collector host's environment when the
+// collector starts. e.TLS goes into the exporter's tls section, the CA inline
+// as ca_pem so no file has to be installed on the host.
+func exporterConfig(sig signal, e monitoring.Endpoint, i int, extensions map[string]any) map[string]any {
 	cfg := map[string]any{sig.name + "_endpoint": e.URL}
 	if len(e.Headers) > 0 {
 		cfg["headers"] = maps.Clone(e.Headers)
 	}
-	if a := e.BasicAuth; a != nil {
+	switch {
+	case e.BasicAuth != nil:
+		authID := sig.id(ExtensionBasicAuth, i)
 		extensions[authID] = map[string]any{"client_auth": map[string]any{
-			"username": a.Username,
-			"password": "${env:" + a.PasswordEnv + "}",
+			"username": e.BasicAuth.Username,
+			"password": "${env:" + e.BasicAuth.PasswordEnv + "}",
 		}}
 		cfg["auth"] = map[string]any{"authenticator": authID}
+	case e.BearerTokenEnv != "":
+		authID := sig.id(ExtensionBearerTokenAuth, i)
+		extensions[authID] = map[string]any{"token": "${env:" + e.BearerTokenEnv + "}"}
+		cfg["auth"] = map[string]any{"authenticator": authID}
+	}
+	if t := e.TLS; t != nil {
+		tls := map[string]any{}
+		if t.CAPEM != "" {
+			tls["ca_pem"] = t.CAPEM
+		}
+		if t.InsecureSkipVerify {
+			tls["insecure_skip_verify"] = true
+		}
+		if len(tls) > 0 {
+			cfg["tls"] = tls
+		}
 	}
 	return cfg
 }

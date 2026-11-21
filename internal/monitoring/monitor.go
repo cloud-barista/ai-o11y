@@ -243,6 +243,24 @@ type Endpoint struct {
 	Headers  map[string]string
 	// BasicAuth, when set, is the account collectors write with.
 	BasicAuth *BasicAuth
+	// BearerTokenEnv, when set, is the environment variable on the
+	// collector's host that holds the token collectors write with as
+	// "Authorization: Bearer", so the token is in no configuration ai-o11y
+	// renders or serves. It cannot be set together with BasicAuth.
+	BearerTokenEnv string
+	// TLS, when set, is how collectors verify an https endpoint.
+	TLS *EndpointTLS
+}
+
+// EndpointTLS is how collectors verify an https endpoint's certificate.
+type EndpointTLS struct {
+	// CAPEM is the PEM of the CAs to verify against instead of the
+	// collector host's, such as a private CA. It is public, so it is rendered
+	// into the configuration rather than installed on each host.
+	CAPEM string
+	// InsecureSkipVerify accepts any certificate. It is for trying out a
+	// setup only.
+	InsecureSkipVerify bool
 }
 
 // BasicAuth is a basic auth account a collector writes with. ai-o11y knows

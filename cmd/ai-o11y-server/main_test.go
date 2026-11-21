@@ -46,7 +46,7 @@ func TestBackendQueryAuthAndTLS(t *testing.T) {
 			bc.Provider = provider
 			bc.QueryURLs = []string{srv.URL + "/metrics"}
 			bc.QueryTLSCAFile = caFile
-			b, err := newBackend(&config.Config{Backend: bc}, query.PromQL{})
+			b, err := newBackend(&config.Config{Backend: bc}, query.PromQL{}, monitoring.Endpoint{})
 			if err != nil {
 				t.Fatalf("%s %s: newBackend: %v", provider, c.name, err)
 			}
@@ -67,7 +67,7 @@ func TestBackendUnreadableCAFails(t *testing.T) {
 		QueryURLs:      []string{"https://q:8443/metrics"},
 		QueryTLSCAFile: filepath.Join(t.TempDir(), "absent.pem"),
 	}
-	if _, err := newBackend(&config.Config{Backend: bc}, query.PromQL{}); err == nil {
+	if _, err := newBackend(&config.Config{Backend: bc}, query.PromQL{}, monitoring.Endpoint{}); err == nil {
 		t.Error("newBackend with a missing CA file succeeded")
 	}
 }
@@ -109,4 +109,103 @@ func TestCollectorOptionsSignals(t *testing.T) {
 	if len(deps.CollectorOptions.LogsEndpoints) != 0 || len(deps.CollectorOptions.TracesEndpoints) != 0 {
 		t.Errorf("no logs or traces address rendered endpoints: %+v", deps.CollectorOptions)
 	}
+}
+
+// TestWriteAccess checks how collectors are told to write: the account's
+// username or the bearer token's variable, never a secret, and the CA file's
+// contents inline. An account with a bearer token, a CA file that cannot be
+// read and one with no PEM certificate are refused.
+func TestWriteAccess(t *testing.T) {
+	dir := t.TempDir()
+	caPEM := testCAPEM()
+	caFile := filepath.Join(dir, "ca.pem")
+	notPEM := filepath.Join(dir, "not.pem")
+	if err := os.WriteFile(caFile, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(notPEM, []byte("not a certificate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ok := []struct {
+		name    string
+		backend config.BackendConfig
+		want    monitoring.Endpoint
+	}{
+		{"none", config.BackendConfig{}, monitoring.Endpoint{}},
+		{"basic", config.BackendConfig{WriteUsername: "writer"},
+			monitoring.Endpoint{BasicAuth: &monitoring.BasicAuth{Username: "writer", PasswordEnv: collector.WritePasswordEnv}}},
+		{"bearer", config.BackendConfig{WriteBearer: true}, monitoring.Endpoint{BearerTokenEnv: collector.WriteTokenEnv}},
+		{"bearer ca", config.BackendConfig{WriteBearer: true, WriteTLSCAFile: caFile},
+			monitoring.Endpoint{BearerTokenEnv: collector.WriteTokenEnv, TLS: &monitoring.EndpointTLS{CAPEM: string(caPEM)}}},
+		{"basic insecure", config.BackendConfig{WriteUsername: "writer", WriteTLSInsecureSkipVerify: true}, monitoring.Endpoint{
+			BasicAuth: &monitoring.BasicAuth{Username: "writer", PasswordEnv: collector.WritePasswordEnv},
+			TLS:       &monitoring.EndpointTLS{InsecureSkipVerify: true},
+		}},
+	}
+	for _, c := range ok {
+		got, err := writeAccess(c.backend)
+		if err != nil {
+			t.Errorf("%s: writeAccess: %v", c.name, err)
+			continue
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: writeAccess = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+	for name, bc := range map[string]config.BackendConfig{
+		"basic and bearer": {WriteUsername: "writer", WriteBearer: true},
+		"missing CA file":  {WriteBearer: true, WriteTLSCAFile: filepath.Join(dir, "absent.pem")},
+		"CA file not PEM":  {WriteBearer: true, WriteTLSCAFile: notPEM},
+	} {
+		if _, err := writeAccess(bc); err == nil {
+			t.Errorf("%s: writeAccess succeeded", name)
+		}
+		if _, err := newDeps(&config.Config{Backend: bc}, monitoring.NewRegistry[monitoring.TargetSource]("target source")); err == nil {
+			t.Errorf("%s: newDeps succeeded", name)
+		}
+	}
+}
+
+// TestCollectorWriteBearerCA checks the bearer token and the CA reach every
+// write address of every signal: the metrics ones through the backend, the
+// logs and traces ones through the collector options.
+func TestCollectorWriteBearerCA(t *testing.T) {
+	caPEM := testCAPEM()
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Backend: config.BackendConfig{
+		Provider:        config.BackendVictoria,
+		QueryURLs:       []string{"https://a:8443/metrics"},
+		WriteURLs:       []string{"https://a:8443/opentelemetry/v1/metrics", "https://b:8443/opentelemetry/v1/metrics"},
+		LogsWriteURLs:   []string{"https://a:8443/insert/opentelemetry/v1/logs"},
+		TracesWriteURLs: []string{"https://a:8443/insert/opentelemetry/v1/traces"},
+		WriteBearer:     true,
+		WriteTLSCAFile:  caFile,
+	}}
+	deps, err := newDeps(cfg, monitoring.NewRegistry[monitoring.TargetSource]("target source"))
+	if err != nil {
+		t.Fatalf("newDeps: %v", err)
+	}
+	if deps.Backend == nil {
+		t.Fatal("no backend")
+	}
+	all := append(deps.Backend.WriteEndpoints(), deps.CollectorOptions.LogsEndpoints...)
+	all = append(all, deps.CollectorOptions.TracesEndpoints...)
+	if len(all) != 4 {
+		t.Fatalf("%d write endpoints, want 4: %+v", len(all), all)
+	}
+	for _, e := range all {
+		if e.BasicAuth != nil || e.BearerTokenEnv != collector.WriteTokenEnv || e.TLS == nil || e.TLS.CAPEM != string(caPEM) || e.TLS.InsecureSkipVerify {
+			t.Errorf("write endpoint %s: %+v", e.URL, e)
+		}
+	}
+}
+
+// testCAPEM is the PEM of the certificate httptest serves TLS with.
+func testCAPEM() []byte {
+	srv := httptest.NewTLSServer(nil)
+	defer srv.Close()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
 }
