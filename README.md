@@ -111,7 +111,9 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   `otlp.translation_strategy`, VictoriaMetrics with
   `-opentelemetry.usePrometheusNaming`. A Thanos Receive stores the same names;
   ai-o11y has not been run against one yet.
-  `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
+  `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now and applies to Thanos only;
+  a VictoriaMetrics cluster's vmselect answers partially unless started with
+  `-search.denyPartialResponse`.
 - **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s and
   `AIO11Y_BACKEND_WRITE_MODE=failover` only the last address has the disk
   queue: while every address fails, samples wait there and go to the last
@@ -121,7 +123,11 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
 - **Write to every address**: with `AIO11Y_BACKEND_WRITE_MODE=all` each address
   has a disk queue of its own (up to 256 MiB each), so an address that fails
   catches up from it once it answers while the others go on.
-- **Accounts**: basic auth only. Collectors read the write account's password
+- **Accounts**: queries are sent with a basic auth account
+  (`AIO11Y_BACKEND_QUERY_USERNAME`, `_QUERY_PASSWORD`) or a bearer token
+  (`AIO11Y_BACKEND_QUERY_BEARER_TOKEN`), not both; https query addresses are
+  verified against the system's CAs or `AIO11Y_BACKEND_QUERY_TLS_CA_FILE`.
+  Collectors write with basic auth only and read the write account's password
   from `AIO11Y_WRITE_PASSWORD` on their host; a collector without it still
   starts, and every write is refused. Over plain HTTP the accounts travel in
   clear text; outside a private network the backend needs TLS in front.
