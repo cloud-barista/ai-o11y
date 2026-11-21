@@ -50,6 +50,12 @@ type BackendConfig struct {
 	// default) sends to the first and moves to the next while one fails, "all"
 	// sends every sample to each.
 	WriteMode string
+	// LogsWriteURLs and TracesWriteURLs are where collectors send the host's
+	// journal and the spans its applications send them, used as WriteMode
+	// says, each the full URL a collector posts to as WriteURLs are. Empty
+	// leaves that signal out of the collector configuration.
+	LogsWriteURLs   []string
+	TracesWriteURLs []string
 	// Timeout bounds one query, across every query address it is tried at.
 	// ConnectTimeout bounds connecting to one address. Left empty, each takes
 	// the provider's default; a value given must be positive.
@@ -176,6 +182,8 @@ func Load() (*Config, error) {
 		"backend.query_url",
 		"backend.write_url",
 		"backend.write_mode",
+		"backend.logs_write_url",
+		"backend.traces_write_url",
 		"backend.timeout",
 		"backend.connect_timeout",
 		"backend.max_concurrent",
@@ -242,6 +250,8 @@ func Load() (*Config, error) {
 			QueryURLs:       splitURLs(v.GetString("backend.query_url")),
 			WriteURLs:       splitURLs(v.GetString("backend.write_url")),
 			WriteMode:       strings.ToLower(strings.TrimSpace(v.GetString("backend.write_mode"))),
+			LogsWriteURLs:   splitURLs(v.GetString("backend.logs_write_url")),
+			TracesWriteURLs: splitURLs(v.GetString("backend.traces_write_url")),
 			Timeout:         timeout,
 			ConnectTimeout:  connectTimeout,
 			MaxConcurrent:   maxConcurrent,

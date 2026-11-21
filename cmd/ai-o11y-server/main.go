@@ -124,9 +124,15 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 		return rest.Deps{}, fmt.Errorf("built-in metric catalog: %w", err)
 	}
 	deps := rest.Deps{
-		Catalog:          cat,
-		Collectors:       []monitoring.CollectorKind{collector.Hostmetrics{}, collector.NvidiaGPU{}, collector.AMDGPU{}},
-		CollectorOptions: collector.Options{TelemetryPort: cfg.Collector.TelemetryPort, StorageDir: cfg.Collector.StorageDir, WriteMode: collector.WriteMode(cfg.Backend.WriteMode)},
+		Catalog:    cat,
+		Collectors: []monitoring.CollectorKind{collector.Hostmetrics{}, collector.NvidiaGPU{}, collector.AMDGPU{}},
+		CollectorOptions: collector.Options{
+			TelemetryPort:   cfg.Collector.TelemetryPort,
+			StorageDir:      cfg.Collector.StorageDir,
+			WriteMode:       collector.WriteMode(cfg.Backend.WriteMode),
+			LogsEndpoints:   writeEndpoints(cfg.Backend.LogsWriteURLs, cfg.Backend.WriteUsername),
+			TracesEndpoints: writeEndpoints(cfg.Backend.TracesWriteURLs, cfg.Backend.WriteUsername),
+		},
 	}
 	if src, err := sources.Get(tumblebug.ProviderName); err == nil {
 		deps.Source = src
@@ -171,13 +177,7 @@ func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, 
 	if len(bc.WriteURLs) == 0 {
 		log.Warn().Msg("AIO11Y_BACKEND_WRITE_URL is not set: collector configuration is unavailable")
 	}
-	write := make([]monitoring.Endpoint, len(bc.WriteURLs))
-	for i, u := range bc.WriteURLs {
-		write[i] = monitoring.Endpoint{URL: u}
-		if bc.WriteUsername != "" {
-			write[i].BasicAuth = &monitoring.BasicAuth{Username: bc.WriteUsername, PasswordEnv: collector.WritePasswordEnv}
-		}
-	}
+	write := writeEndpoints(bc.WriteURLs, bc.WriteUsername)
 	limits := query.ChunkLimits{MaxIDs: bc.MaxIDs, MaxConcurrent: bc.MaxConcurrent}
 	var headers map[string]string
 	switch {
@@ -204,6 +204,19 @@ func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, 
 	default:
 		return nil, fmt.Errorf("unknown metrics backend %q", bc.Provider)
 	}
+}
+
+// writeEndpoints are the write addresses urls, each with the write account
+// username when one is set; its password is read on the collector's host.
+func writeEndpoints(urls []string, username string) []monitoring.Endpoint {
+	write := make([]monitoring.Endpoint, len(urls))
+	for i, u := range urls {
+		write[i] = monitoring.Endpoint{URL: u}
+		if username != "" {
+			write[i].BasicAuth = &monitoring.BasicAuth{Username: username, PasswordEnv: collector.WritePasswordEnv}
+		}
+	}
+	return write
 }
 
 // basicAuth is the Authorization header value of a basic auth account.

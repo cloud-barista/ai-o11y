@@ -133,6 +133,8 @@ func TestTemplateVariablesLoad(t *testing.T) {
 		"AIO11Y_BACKEND_QUERY_URL":                      {"http://q1, http://q2/", func(c *Config) any { return strings.Join(c.Backend.QueryURLs, ",") }, "http://q1,http://q2", nil},
 		"AIO11Y_BACKEND_WRITE_URL":                      {"http://w1/", func(c *Config) any { return strings.Join(c.Backend.WriteURLs, ",") }, "http://w1", nil},
 		"AIO11Y_BACKEND_WRITE_MODE":                     {"ALL", func(c *Config) any { return c.Backend.WriteMode }, WriteAll, nil},
+		"AIO11Y_BACKEND_LOGS_WRITE_URL":                 {"http://l1/, http://l2", func(c *Config) any { return strings.Join(c.Backend.LogsWriteURLs, ",") }, "http://l1,http://l2", nil},
+		"AIO11Y_BACKEND_TRACES_WRITE_URL":               {"http://t1/", func(c *Config) any { return strings.Join(c.Backend.TracesWriteURLs, ",") }, "http://t1", nil},
 		"AIO11Y_BACKEND_TIMEOUT":                        {"45s", func(c *Config) any { return c.Backend.Timeout }, 45 * time.Second, nil},
 		"AIO11Y_BACKEND_CONNECT_TIMEOUT":                {"4s", func(c *Config) any { return c.Backend.ConnectTimeout }, 4 * time.Second, nil},
 		"AIO11Y_BACKEND_MAX_CONCURRENT":                 {"3", func(c *Config) any { return c.Backend.MaxConcurrent }, 3, nil},
