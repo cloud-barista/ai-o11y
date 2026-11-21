@@ -32,8 +32,8 @@ func targets(ids ...string) monitoring.TargetSet {
 // cpuUtil is the catalog expression of system.cpu.utilization with the
 // placeholders filled.
 func cpuUtil(sel, rng string) string {
-	return `1 - (sum by (entity_id) (rate({"system.cpu.time", state="idle", ` + sel + `}[` + rng + `]))` +
-		` / sum by (entity_id) (rate({"system.cpu.time", ` + sel + `}[` + rng + `])))`
+	return `1 - (sum by (entity_id) (rate(system_cpu_time_seconds_total{state="idle", ` + sel + `}[` + rng + `]))` +
+		` / sum by (entity_id) (rate(system_cpu_time_seconds_total{` + sel + `}[` + rng + `])))`
 }
 
 const abc = `entity_id=~"a|b|c"`
@@ -70,7 +70,7 @@ func TestRenderCurrentScreens(t *testing.T) {
 				Metric: "system.filesystem.usage", Targets: targets("a", "b"), Window: hour,
 				Within: &monitoring.Reduce{Label: "mountpoint", Fn: monitoring.AggSum},
 			},
-			`sum by (entity_id) (avg_over_time((sum by (entity_id, mountpoint) ({"system.filesystem.usage", state="used", entity_id=~"a|b"}))[1h:30s]))`,
+			`sum by (entity_id) (avg_over_time((sum by (entity_id, mountpoint) (system_filesystem_usage_bytes{state="used", entity_id=~"a|b"}))[1h:30s]))`,
 		},
 		// Q5: top VMs by the mean over the duration (VM overview top 5).
 		"Q5 top-k": {
@@ -167,11 +167,11 @@ func TestRenderWindow(t *testing.T) {
 		},
 		"gauge current value": {
 			"system.memory.utilization", monitoring.Agg{},
-			`sum by (entity_id) ({"system.memory.utilization", state="used", entity_id="a"})`,
+			`sum by (entity_id) (system_memory_utilization_ratio{state="used", entity_id="a"})`,
 		},
 		"gauge last": {
 			"system.memory.utilization", monitoring.Agg{Fn: monitoring.AggLast, Range: 10 * time.Minute},
-			`last_over_time((sum by (entity_id) ({"system.memory.utilization", state="used", entity_id="a"}))[10m:30s])`,
+			`last_over_time((sum by (entity_id) (system_memory_utilization_ratio{state="used", entity_id="a"}))[10m:30s])`,
 		},
 	} {
 		got, err := r.Render(monitoring.QuerySpec{Metric: tc.metric, Targets: targets("a"), Window: tc.window})

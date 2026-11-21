@@ -22,13 +22,14 @@ func TestRenderedConfigValidates(t *testing.T) {
 	windows.OS = "windows"
 	telemetryPorts := map[string]int{"gpu vm": 18889}
 	authed := []monitoring.Endpoint{{URL: failover[0].URL, BasicAuth: &monitoring.BasicAuth{Username: "writer", PasswordEnv: WritePasswordEnv}}}
-	endpoints := map[string][]monitoring.Endpoint{"failover vm": failover, "account vm": authed}
-	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM(), "amd gpu vm": amdGPUVM(), "failover vm": vm(), "account vm": vm()} {
+	endpoints := map[string][]monitoring.Endpoint{"failover vm": failover, "write-all vm": failover, "write-all gpu vm": failover, "account vm": authed}
+	modes := map[string]WriteMode{"write-all vm": WriteAll, "write-all gpu vm": WriteAll}
+	for name, target := range map[string]monitoring.Target{"linux vm": vm(), "windows vm": windows, "gpu vm": gpuVM(), "amd gpu vm": amdGPUVM(), "failover vm": vm(), "write-all vm": vm(), "write-all gpu vm": gpuVM(), "account vm": vm()} {
 		ep := endpoint
 		if e, ok := endpoints[name]; ok {
 			ep = e
 		}
-		out, err := Render(target, kinds, builtin(t), ep, Options{TelemetryPort: telemetryPorts[name]})
+		out, err := Render(target, kinds, builtin(t), ep, Options{TelemetryPort: telemetryPorts[name], WriteMode: modes[name]})
 		if err != nil {
 			t.Fatalf("%s: Render: %v", name, err)
 		}

@@ -50,8 +50,12 @@ func TestBackendTimeouts(t *testing.T) {
 	}
 }
 
+// TestBackendEnvDoesNotShadowBackendKeys sets AIO11Y_BACKEND, the name the
+// provider used to be read from, beside the backend settings: it must neither
+// hide them nor drop the defaults of the ones left unset.
 func TestBackendEnvDoesNotShadowBackendKeys(t *testing.T) {
 	t.Setenv("AIO11Y_BACKEND", "victoria")
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "victoria")
 	t.Setenv("AIO11Y_BACKEND_QUERY_URL", "http://vm-a:8427/,http://vm-b:8427")
 	t.Setenv("AIO11Y_BACKEND_WRITE_URL", "http://vm-a:8427/opentelemetry")
 	t.Setenv("AIO11Y_BACKEND_WRITE_USERNAME", "writer")
@@ -71,6 +75,14 @@ func TestBackendEnvDoesNotShadowBackendKeys(t *testing.T) {
 	}
 	if b.WriteUsername != "writer" {
 		t.Errorf("WriteUsername = %q, want writer", b.WriteUsername)
+	}
+	if b.WriteMode != WriteFailover {
+		t.Errorf("WriteMode = %q, want the default %q", b.WriteMode, WriteFailover)
+	}
+
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "")
+	if cfg, err = Load(); err != nil || cfg.Backend.Provider != BackendThanos {
+		t.Errorf("AIO11Y_BACKEND alone = %+v, %v, want the default %q", cfg, err, BackendThanos)
 	}
 }
 
@@ -97,9 +109,10 @@ func TestTemplateVariablesLoad(t *testing.T) {
 		"AIO11Y_DB_CONNECT_TIMEOUT":          {"6s", func(c *Config) any { return c.DB.ConnectTimeout }, 6 * time.Second},
 		"AIO11Y_DB_READ_TIMEOUT":             {"31s", func(c *Config) any { return c.DB.ReadTimeout }, 31 * time.Second},
 		"AIO11Y_DB_WRITE_TIMEOUT":            {"32s", func(c *Config) any { return c.DB.WriteTimeout }, 32 * time.Second},
-		"AIO11Y_BACKEND":                     {"VICTORIA", func(c *Config) any { return c.Backend.Provider }, BackendVictoria},
+		"AIO11Y_BACKEND_PROVIDER":            {"VICTORIA", func(c *Config) any { return c.Backend.Provider }, BackendVictoria},
 		"AIO11Y_BACKEND_QUERY_URL":           {"http://q1, http://q2/", func(c *Config) any { return strings.Join(c.Backend.QueryURLs, ",") }, "http://q1,http://q2"},
 		"AIO11Y_BACKEND_WRITE_URL":           {"http://w1/", func(c *Config) any { return strings.Join(c.Backend.WriteURLs, ",") }, "http://w1"},
+		"AIO11Y_BACKEND_WRITE_MODE":          {"ALL", func(c *Config) any { return c.Backend.WriteMode }, WriteAll},
 		"AIO11Y_BACKEND_TIMEOUT":             {"45s", func(c *Config) any { return c.Backend.Timeout }, 45 * time.Second},
 		"AIO11Y_BACKEND_CONNECT_TIMEOUT":     {"4s", func(c *Config) any { return c.Backend.ConnectTimeout }, 4 * time.Second},
 		"AIO11Y_BACKEND_MAX_CONCURRENT":      {"3", func(c *Config) any { return c.Backend.MaxConcurrent }, 3},
@@ -146,5 +159,39 @@ func TestTemplateVariablesLoad(t *testing.T) {
 		if got := c.got(cfg); got != c.want {
 			t.Errorf("%s=%q: got %v, want %v", name, c.value, got, c.want)
 		}
+	}
+}
+
+func TestWriteMode(t *testing.T) {
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", "")
+	cfg, err := Load()
+	if err != nil || cfg.Backend.WriteMode != WriteFailover {
+		t.Fatalf("unset = %+v, %v, want failover", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", " All ")
+	if cfg, err = Load(); err != nil || cfg.Backend.WriteMode != WriteAll {
+		t.Fatalf("all = %+v, %v", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_WRITE_MODE", "round-robin")
+	if _, err := Load(); err == nil {
+		t.Error("an unknown write mode loaded")
+	}
+}
+
+func TestBackendProvider(t *testing.T) {
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "")
+	cfg, err := Load()
+	if err != nil || cfg.Backend.Provider != BackendThanos {
+		t.Fatalf("unset = %+v, %v, want thanos", cfg, err)
+	}
+	// Set beside the other backend settings, the provider still reads.
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "victoria")
+	t.Setenv("AIO11Y_BACKEND_QUERY_URL", "http://vmauth:8427")
+	if cfg, err = Load(); err != nil || cfg.Backend.Provider != BackendVictoria || len(cfg.Backend.QueryURLs) != 1 {
+		t.Fatalf("victoria = %+v, %v", cfg, err)
+	}
+	t.Setenv("AIO11Y_BACKEND_PROVIDER", "mimir")
+	if _, err := Load(); err == nil {
+		t.Error("an unknown provider loaded")
 	}
 }

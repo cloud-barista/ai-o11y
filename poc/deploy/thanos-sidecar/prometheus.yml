@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 30s
+  # The Sidecar labels every block with these. The replicas differ only in
+  # "replica" (PROMETHEUS_REPLICA, set per replica in the compose files),
+  # which the Querier deduplicates on.
+  external_labels:
+    replica: ${PROMETHEUS_REPLICA}
+
+otlp:
+  # Store Prometheus names (system.cpu.time in seconds as
+  # system_cpu_time_seconds_total), the names ai-o11y's metric catalog
+  # queries. It is the default, written out because the catalog depends on it.
+  translation_strategy: UnderscoreEscapingWithSuffixes
+
+storage:
+  tsdb:
+    # Collectors send at their own times, so a late sample is not rejected.
+    out_of_order_time_window: 10m

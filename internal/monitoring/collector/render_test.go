@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -41,7 +42,7 @@ func vm() monitoring.Target {
 
 var (
 	kinds    = []monitoring.CollectorKind{Hostmetrics{}, NvidiaGPU{}, AMDGPU{}}
-	endpoint = []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp"}}
+	endpoint = []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp/v1/metrics"}}
 )
 
 func checkGolden(t *testing.T, name string, got []byte) {
@@ -148,11 +149,11 @@ func TestHostmetricsRejectsUnknownMetric(t *testing.T) {
 func TestHostmetricsTopProcess(t *testing.T) {
 	cpu := monitoring.MetricRow{
 		Name: "system.uptime", Area: "system", Unit: "s", Kind: monitoring.KindGauge,
-		Exprs: map[string]string{catalog.CollectorHostmetrics: `max by (entity_id) ({"system.uptime", $sel})`},
+		Exprs: map[string]string{catalog.CollectorHostmetrics: `max by (entity_id) (system_uptime_seconds{$sel})`},
 	}
 	proc := monitoring.MetricRow{
 		Name: "process.memory.utilization", Area: "process", Unit: "1", Kind: monitoring.KindGauge,
-		Exprs:     map[string]string{catalog.CollectorHostmetrics: `sum by (entity_id) ({"process.memory.utilization", $sel})`},
+		Exprs:     map[string]string{catalog.CollectorHostmetrics: `sum by (entity_id) (process_memory_utilization_ratio{$sel})`},
 		Dimension: "x", DimensionName: "x", Enables: []string{"process.memory.utilization"},
 	}
 	for name, tc := range map[string]struct {
@@ -206,6 +207,7 @@ func TestScraperOf(t *testing.T) {
 		"system_processes_count":           "processes",
 		"system_uptime_seconds":            "system",
 		"process.cpu.utilization":          "process",
+		"process_cpu_utilization_ratio":    "process",
 	} {
 		got, err := scraperOf(name)
 		if err != nil || got != want {
@@ -328,8 +330,8 @@ func TestRenderTelemetry(t *testing.T) {
 // failover is two write endpoints, as two vmauths in front of replicated
 // storage.
 var failover = []monitoring.Endpoint{
-	{URL: "http://vmauth-1:8427/opentelemetry"},
-	{URL: "http://vmauth-2:8427/opentelemetry"},
+	{URL: "http://vmauth-1:8427/opentelemetry/v1/metrics"},
+	{URL: "http://vmauth-2:8427/opentelemetry/v1/metrics"},
 }
 
 // TestRenderFailover pins the configuration for several write endpoints: an
@@ -341,6 +343,20 @@ func TestRenderFailover(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	checkGolden(t, "vm-failover.golden.yaml", got)
+}
+
+// TestRenderWriteAll pins the configuration that sends to every endpoint: an
+// exporter per endpoint with its own queue and retries, all of them in the
+// metrics pipeline, and no failover connector. An unknown mode is an error.
+func TestRenderWriteAll(t *testing.T) {
+	got, err := Render(vm(), kinds, builtin(t), failover, Options{WriteMode: WriteAll})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	checkGolden(t, "vm-write-all.golden.yaml", got)
+	if _, err := Render(vm(), kinds, builtin(t), failover, Options{WriteMode: "round-robin"}); err == nil {
+		t.Error("an unknown write mode rendered")
+	}
 }
 
 // TestRenderWriteAccount pins the configuration for write endpoints with an
@@ -364,7 +380,7 @@ func TestRenderWriteAccount(t *testing.T) {
 	if err != nil || !strings.Contains(string(single), "authenticator: "+ExtensionBasicAuth+"\n") {
 		t.Errorf("single endpoint with an account = %v\n%s", err, single)
 	}
-	bad := []monitoring.Endpoint{{URL: "http://vmauth:8427/opentelemetry", BasicAuth: &monitoring.BasicAuth{Username: "writer"}}}
+	bad := []monitoring.Endpoint{{URL: "http://vmauth:8427/opentelemetry/v1/metrics", BasicAuth: &monitoring.BasicAuth{Username: "writer"}}}
 	if _, err := Render(vm(), kinds, builtin(t), bad, Options{}); err == nil {
 		t.Error("an account without a password variable rendered")
 	}
@@ -381,9 +397,10 @@ type renderedConfig struct {
 }
 
 // TestRenderDiskQueue: one endpoint keeps what it cannot send on disk and
-// retries it with no time limit; with several, only the last does, and the
-// others fail fast so the failover connector moves on. The queue directory
-// comes from the options, or the default.
+// retries it with no time limit; with several in failover, only the last
+// does, and the others fail fast so the failover connector moves on; with
+// several in WriteAll, every one does, in the one file storage extension. The
+// queue directory comes from the options, or the default.
 func TestRenderDiskQueue(t *testing.T) {
 	diskQueue := map[string]any{
 		"enabled":       true,
@@ -395,19 +412,30 @@ func TestRenderDiskQueue(t *testing.T) {
 	forever := map[string]any{"enabled": true, "max_elapsed_time": "0s"}
 	off := map[string]any{"enabled": false}
 	three := append(failover[:2:2], monitoring.Endpoint{URL: "http://vmauth-3:8427/opentelemetry"})
+	e := func(ids ...int) []string {
+		out := make([]string, len(ids))
+		for i, id := range ids {
+			out[i] = fmt.Sprintf("%s/%d", ExporterOTLPHTTP, id)
+		}
+		return out
+	}
 	for name, tc := range map[string]struct {
 		endpoints []monitoring.Endpoint
+		mode      WriteMode
 		dir       string
-		queued    string
+		queued    []string
 		failFast  []string
 		wantDir   string
 	}{
-		"single":     {endpoint, "", ExporterOTLPHTTP, nil, DefaultStorageDir},
-		"single dir": {endpoint, "/srv/queue", ExporterOTLPHTTP, nil, "/srv/queue"},
-		"two":        {failover, "", ExporterOTLPHTTP + "/1", []string{ExporterOTLPHTTP + "/0"}, DefaultStorageDir},
-		"three":      {three, "/srv/queue", ExporterOTLPHTTP + "/2", []string{ExporterOTLPHTTP + "/0", ExporterOTLPHTTP + "/1"}, "/srv/queue"},
+		"single":        {endpoint, "", "", []string{ExporterOTLPHTTP}, nil, DefaultStorageDir},
+		"single dir":    {endpoint, "", "/srv/queue", []string{ExporterOTLPHTTP}, nil, "/srv/queue"},
+		"single all":    {endpoint, WriteAll, "", []string{ExporterOTLPHTTP}, nil, DefaultStorageDir},
+		"two":           {failover, "", "", e(1), e(0), DefaultStorageDir},
+		"three":         {three, WriteFailover, "/srv/queue", e(2), e(0, 1), "/srv/queue"},
+		"two all":       {failover, WriteAll, "", e(0, 1), nil, DefaultStorageDir},
+		"three all dir": {three, WriteAll, "/srv/queue", e(0, 1, 2), nil, "/srv/queue"},
 	} {
-		out, err := Render(vm(), kinds, builtin(t), tc.endpoints, Options{StorageDir: tc.dir})
+		out, err := Render(vm(), kinds, builtin(t), tc.endpoints, Options{StorageDir: tc.dir, WriteMode: tc.mode})
 		if err != nil {
 			t.Fatalf("%s: Render: %v", name, err)
 		}
@@ -415,12 +443,14 @@ func TestRenderDiskQueue(t *testing.T) {
 		if err := yaml.Unmarshal(out, &cfg); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if len(cfg.Exporters) != 1+len(tc.failFast) {
-			t.Errorf("%s: %d exporters, want %d", name, len(cfg.Exporters), 1+len(tc.failFast))
+		if len(cfg.Exporters) != len(tc.queued)+len(tc.failFast) {
+			t.Errorf("%s: %d exporters, want %d", name, len(cfg.Exporters), len(tc.queued)+len(tc.failFast))
 		}
-		q := cfg.Exporters[tc.queued]
-		if !reflect.DeepEqual(q["sending_queue"], diskQueue) || !reflect.DeepEqual(q["retry_on_failure"], forever) {
-			t.Errorf("%s: %s queue = %v, retry = %v", name, tc.queued, q["sending_queue"], q["retry_on_failure"])
+		for _, id := range tc.queued {
+			q := cfg.Exporters[id]
+			if !reflect.DeepEqual(q["sending_queue"], diskQueue) || !reflect.DeepEqual(q["retry_on_failure"], forever) {
+				t.Errorf("%s: %s queue = %v, retry = %v", name, id, q["sending_queue"], q["retry_on_failure"])
+			}
 		}
 		for _, id := range tc.failFast {
 			e := cfg.Exporters[id]
@@ -434,6 +464,45 @@ func TestRenderDiskQueue(t *testing.T) {
 		}
 		if !slices.Contains(cfg.Service.Extensions, ExtensionQueueStorage) {
 			t.Errorf("%s: service extensions %v miss %s", name, cfg.Service.Extensions, ExtensionQueueStorage)
+		}
+	}
+}
+
+// TestRenderWriteModeKeepsSources: the write mode changes only where samples
+// go. The receivers, the processors (memory limiter, top processes) and the
+// metrics pipeline's receivers and processors of a GPU VM render the same with
+// one endpoint, with several in failover and with several in WriteAll.
+func TestRenderWriteModeKeepsSources(t *testing.T) {
+	type sources struct {
+		Receivers  map[string]any `yaml:"receivers"`
+		Processors map[string]any `yaml:"processors"`
+		Service    struct {
+			Pipelines struct {
+				Metrics struct {
+					Receivers  []string `yaml:"receivers"`
+					Processors []string `yaml:"processors"`
+				} `yaml:"metrics"`
+			} `yaml:"pipelines"`
+		} `yaml:"service"`
+	}
+	render := func(endpoints []monitoring.Endpoint, mode WriteMode) sources {
+		out, err := Render(gpuVM(), kinds, builtin(t), endpoints, Options{WriteMode: mode})
+		if err != nil {
+			t.Fatalf("Render %s: %v", mode, err)
+		}
+		var s sources
+		if err := yaml.Unmarshal(out, &s); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	want := render(endpoint, "")
+	if _, ok := want.Processors[MemoryLimiterProcessor]; !ok || want.Service.Pipelines.Metrics.Processors[0] != MemoryLimiterProcessor {
+		t.Fatalf("single endpoint: memory limiter missing or not first: %v", want.Service.Pipelines.Metrics.Processors)
+	}
+	for _, mode := range []WriteMode{WriteFailover, WriteAll} {
+		if got := render(failover, mode); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: sources = %+v, want %+v", mode, got, want)
 		}
 	}
 }

@@ -33,9 +33,10 @@ type Config struct {
 	// the next when one cannot be reached or answers with a 5xx.
 	QueryURLs []string
 	// Write is where collectors send samples (OTLP over HTTP), in order of
-	// preference. With a Sidecar it is Prometheus' OTLP receiver, which must
-	// keep the names collectors send (otlp.translation_strategy:
-	// NoTranslation); the metric catalog queries those names.
+	// preference: Prometheus' OTLP receiver behind a Sidecar, or a Thanos
+	// Receive. Both store Prometheus names (system_cpu_time_seconds_total),
+	// the names the metric catalog queries; Prometheus does so with its
+	// default otlp.translation_strategy (UnderscoreEscapingWithSuffixes).
 	Write []monitoring.Endpoint
 	// PartialResponse lets a query answer with what the reachable stores hold
 	// when another store fails. Off, any failing store fails the query, even

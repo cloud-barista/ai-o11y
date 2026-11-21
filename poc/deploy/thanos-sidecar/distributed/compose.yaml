@@ -1,0 +1,138 @@
+# One VM's part of the Prometheus + Thanos Sidecar setup spread over three
+# VMs, with the SeaweedFS cluster of storage/seaweedfs/distributed.
+# COMPOSE_PROFILES picks what runs here: a Prometheus replica with its Sidecar
+# ("prometheus", VM1 and VM2), a Querier and a Store Gateway ("query", VM1 and
+# VM2) and the one Compactor ("compact", VM1). Every VM runs this same file
+# with its own .env (../README.md).
+#
+# Host networking: each part listens on SELF_ADDR, the VM's own address, which
+# the other VMs reach it at. Ports in ../README.md.
+#
+# ai-o11y settings for this setup:
+#   AIO11Y_BACKEND_PROVIDER=thanos
+#   AIO11Y_BACKEND_QUERY_URL=http://<VM1>:10904,http://<VM2>:10904
+#   AIO11Y_BACKEND_WRITE_URL=http://<VM1>:9090/api/v1/otlp/v1/metrics,http://<VM2>:9090/api/v1/otlp/v1/metrics
+#   AIO11Y_BACKEND_WRITE_MODE=all
+name: aio11y-thanos-sidecar
+
+# The object storage, started with this file. It reads its settings from this
+# directory's .env too, so they are set once.
+include:
+  - path: ../../storage/seaweedfs/distributed/compose.yaml
+    env_file: .env
+
+x-thanos: &thanos
+  image: quay.io/thanos/thanos:${THANOS_VERSION}
+  restart: unless-stopped
+  network_mode: host
+  depends_on: [thanos-data]
+
+# This VM's filer, through which the Thanos parts here read and write blocks.
+x-objstore: &objstore '--objstore.config={type: S3, config: {bucket: "${S3_BUCKET}", endpoint: "${SELF_ADDR}:8333", insecure: true, access_key: "${S3_ACCESS_KEY}", secret_key: "${S3_SECRET_KEY}"}}'
+
+services:
+  # Thanos runs as uid 1001 and the data volumes start owned by root; this
+  # hands them over once, before the Thanos services start.
+  thanos-data:
+    image: quay.io/thanos/thanos:${THANOS_VERSION}
+    user: root
+    entrypoint: [chown, "1001:1001", /store, /compact]
+    volumes: [store:/store, compact:/compact]
+
+  # A Prometheus replica taking OTLP from the collectors. The replicas' series
+  # differ only in the external label "replica" (this VM's address,
+  # ../prometheus.yml), which the Querier deduplicates on.
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    profiles: [prometheus]
+    restart: unless-stopped
+    network_mode: host
+    environment: {PROMETHEUS_REPLICA: "${SELF_ADDR}"}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION}
+      - --web.listen-address=${SELF_ADDR}:9090
+      - --web.enable-otlp-receiver
+      # The Sidecar uploads blocks of a fixed size and leaves compaction to
+      # the Compactor.
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+      # Late samples (out_of_order_time_window, ../prometheus.yml) become
+      # blocks overlapping the others. Prometheus would merge those itself
+      # into blocks the Sidecar does not upload; left alone, they are uploaded
+      # and the Compactor merges them.
+      - --no-storage.tsdb.allow-overlapping-compaction
+    volumes: [prometheus:/prometheus, ../prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+
+  # Serves this VM's Prometheus to the Queriers and uploads every block it
+  # cuts (every 2 hours) to the bucket. It runs as Prometheus's user, as it
+  # reads and marks Prometheus's data directory.
+  sidecar:
+    <<: *thanos
+    profiles: [prometheus]
+    user: "65534"
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://${SELF_ADDR}:9090
+      - --grpc-address=${SELF_ADDR}:10901
+      - --http-address=${SELF_ADDR}:10902
+      - *objstore
+    volumes: [prometheus:/prometheus]
+    depends_on: [prometheus]
+
+  # Serves the blocks in the bucket to the Queriers.
+  store:
+    <<: *thanos
+    profiles: [query]
+    command:
+      - store
+      - --data-dir=/data
+      - --grpc-address=${SELF_ADDR}:10905
+      - --http-address=${SELF_ADDR}:10906
+      - *objstore
+    volumes: [store:/data]
+
+  # Recent samples from both Sidecars, older blocks from both Store Gateways;
+  # the replicas differ only in "replica", which it deduplicates on.
+  query:
+    <<: *thanos
+    profiles: [query]
+    command:
+      - query
+      - --grpc-address=${SELF_ADDR}:10903
+      - --http-address=${SELF_ADDR}:10904
+      - --endpoint=${VM1_ADDR}:10901
+      - --endpoint=${VM2_ADDR}:10901
+      - --endpoint=${VM1_ADDR}:10905
+      - --endpoint=${VM2_ADDR}:10905
+      - --query.replica-label=replica
+      # Every replica gets the same samples (AIO11Y_BACKEND_WRITE_MODE=all), so
+      # the copies are merged one to one. The default "penalty" merging, made
+      # for replicas that scrape at their own times, drops samples here.
+      - --deduplication.func=chain
+
+  # Compacts and downsamples the bucket and applies its retention. One per
+  # bucket only: a second would compact the same blocks twice.
+  compact:
+    <<: *thanos
+    profiles: [compact]
+    command:
+      - compact
+      - --wait
+      # Merges the overlapping blocks late samples make, rather than halting
+      # on them.
+      - --compact.enable-vertical-compaction
+      - --data-dir=/data
+      - --http-address=${SELF_ADDR}:10912
+      - --retention.resolution-raw=${COMPACT_RETENTION_RAW}
+      - --retention.resolution-5m=${COMPACT_RETENTION_5M}
+      - --retention.resolution-1h=${COMPACT_RETENTION_1H}
+      - *objstore
+    volumes: [compact:/data]
+
+volumes:
+  prometheus:
+  store:
+  compact:

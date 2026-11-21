@@ -59,14 +59,14 @@ func TestQuerySendsNoThanosParams(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	b, err := New(Config{QueryURLs: []string{"http://vmauth:8427"}, Write: []monitoring.Endpoint{{URL: "http://vmauth-1:8427/opentelemetry"}, {URL: "http://vmauth-2:8427/opentelemetry"}}}, renderer(t))
+	b, err := New(Config{QueryURLs: []string{"http://vmauth:8427"}, Write: []monitoring.Endpoint{{URL: "http://vmauth-1:8427/opentelemetry/v1/metrics"}, {URL: "http://vmauth-2:8427/opentelemetry/v1/metrics"}}}, renderer(t))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	if got := b.planner.Limits; got.MaxIDs != DefaultMaxIDs || got.MaxConcurrent != DefaultMaxConcurrent {
 		t.Errorf("limits = %+v", got)
 	}
-	if got := b.WriteEndpoints(); len(got) != 2 || got[0].Protocol != "otlp_http" || got[1].URL != "http://vmauth-2:8427/opentelemetry" {
+	if got := b.WriteEndpoints(); len(got) != 2 || got[0].Protocol != "otlp_http" || got[1].URL != "http://vmauth-2:8427/opentelemetry/v1/metrics" {
 		t.Errorf("write endpoint = %+v", got)
 	}
 	if _, err := New(Config{}, renderer(t)); err == nil {

@@ -125,7 +125,7 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 	deps := rest.Deps{
 		Catalog:          cat,
 		Collectors:       []monitoring.CollectorKind{collector.Hostmetrics{}, collector.NvidiaGPU{}, collector.AMDGPU{}},
-		CollectorOptions: collector.Options{TelemetryPort: cfg.Collector.TelemetryPort, StorageDir: cfg.Collector.StorageDir},
+		CollectorOptions: collector.Options{TelemetryPort: cfg.Collector.TelemetryPort, StorageDir: cfg.Collector.StorageDir, WriteMode: collector.WriteMode(cfg.Backend.WriteMode)},
 	}
 	if src, err := sources.Get(tumblebug.ProviderName); err == nil {
 		deps.Source = src
@@ -158,7 +158,7 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 	return deps, nil
 }
 
-// newBackend builds the metrics backend AIO11Y_BACKEND selects. It returns nil
+// newBackend builds the metrics backend AIO11Y_BACKEND_PROVIDER selects. It returns nil
 // when no query URL is set, leaving queries and collector configuration
 // unavailable.
 func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, error) {

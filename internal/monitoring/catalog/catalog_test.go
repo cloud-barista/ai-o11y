@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 	"github.com/prometheus/prometheus/promql/promqltest"
 
@@ -117,7 +119,8 @@ func TestNewRejects(t *testing.T) {
 }
 
 // TestMIGSMUtilization runs nvml:mig.sm.utilization on series as the
-// nvidia_gpu receiver writes nvml.gpm.sm.utilization: a device point and MIG
+// backend stores what the nvidia_gpu receiver writes as
+// nvml.gpm.sm.utilization (nvml_gpm_sm_utilization_percent): a device point and MIG
 // instance points with mig "true", two GPUs each with a GPU instance 1, one
 // MIG instance NVML gave no MIG UUID.
 func TestMIGSMUtilization(t *testing.T) {
@@ -133,11 +136,11 @@ func TestMIGSMUtilization(t *testing.T) {
 		t.Fatalf("row = %+v, want one nvidia_smi expression and no gap", row)
 	}
 	st := promqltest.LoadedStorage(t, `load 30s
-  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-1",index="0"} 90x10
-  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-1",index="0",mig="true",gpu_instance_id="1","mig.uuid"="MIG-11"} 40x10
-  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-1",index="0",mig="true",gpu_instance_id="2","mig.uuid"="MIG-12"} 12.5x10
-  {__name__="nvml.gpm.sm.utilization",entity_id="a",uuid="GPU-2",index="1",mig="true",gpu_instance_id="1"} 70x10
-  {__name__="nvml.gpm.sm.utilization",entity_id="b",uuid="GPU-3",index="0",mig="true",gpu_instance_id="1","mig.uuid"="MIG-31"} 5x10
+  {__name__="nvml_gpm_sm_utilization_percent",entity_id="a",uuid="GPU-1",index="0"} 90x10
+  {__name__="nvml_gpm_sm_utilization_percent",entity_id="a",uuid="GPU-1",index="0",mig="true",gpu_instance_id="1",mig_uuid="MIG-11"} 40x10
+  {__name__="nvml_gpm_sm_utilization_percent",entity_id="a",uuid="GPU-1",index="0",mig="true",gpu_instance_id="2",mig_uuid="MIG-12"} 12.5x10
+  {__name__="nvml_gpm_sm_utilization_percent",entity_id="a",uuid="GPU-2",index="1",mig="true",gpu_instance_id="1"} 70x10
+  {__name__="nvml_gpm_sm_utilization_percent",entity_id="b",uuid="GPU-3",index="0",mig="true",gpu_instance_id="1",mig_uuid="MIG-31"} 5x10
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	expr := strings.ReplaceAll(row.Exprs[CollectorNvidiaSMI], monitoring.PlaceholderSelector, `entity_id="a"`)
@@ -168,6 +171,124 @@ func TestMIGSMUtilization(t *testing.T) {
 	for k, v := range want {
 		if g, ok := got[k]; !ok || g != v {
 			t.Errorf("mig.sm.utilization[%s] = %v, want %v", k, g, v)
+		}
+	}
+}
+
+// storedNames are the series names a VictoriaMetrics 1.155 with
+// -opentelemetry.usePrometheusNaming stored for the metrics of the ai-o11y
+// collector's receivers (hostmetrics, nvidia_gpu with XID and GPM, amd_gpu)
+// and top_process processor, as far as the catalog reads them. Most came from
+// the collector itself; the GPU fields the GPUs at hand left empty (ECC,
+// remapped rows, some temperatures) were sent over OTLP under the name and
+// unit the receiver gives them.
+var storedNames = []string{
+	"amd_smi_clock_gfx_0_clk_MHz",
+	"amd_smi_clock_mem_0_clk_MHz",
+	"amd_smi_ecc_total_correctable_count",
+	"amd_smi_ecc_total_deferred_count",
+	"amd_smi_ecc_total_uncorrectable_count",
+	"amd_smi_energy_total_energy_consumption_joules",
+	"amd_smi_mem_usage_total_gtt_mebibytes",
+	"amd_smi_mem_usage_total_vram_mebibytes",
+	"amd_smi_mem_usage_used_gtt_mebibytes",
+	"amd_smi_mem_usage_used_vram_mebibytes",
+	"amd_smi_pcie_replay_count",
+	"amd_smi_power_socket_power_watts",
+	"amd_smi_temperature_edge_celsius",
+	"amd_smi_temperature_hotspot_celsius",
+	"amd_smi_temperature_mem_celsius",
+	"amd_smi_usage_gfx_activity_percent",
+	"amd_smi_usage_mm_activity_percent",
+	"amd_smi_usage_umc_activity_percent",
+	"nvidia_kmsg_xid_errors_total",
+	"nvidia_smi_clocks_event_reasons_active",
+	"nvidia_smi_clocks_mem_MHz",
+	"nvidia_smi_clocks_sm_MHz",
+	"nvidia_smi_ecc_errors_corrected_aggregate_total",
+	"nvidia_smi_ecc_errors_corrected_volatile_total",
+	"nvidia_smi_ecc_errors_uncorrected_aggregate_total",
+	"nvidia_smi_ecc_errors_uncorrected_volatile_total",
+	"nvidia_smi_fan_speed_percent",
+	"nvidia_smi_memory_total_mebibytes",
+	"nvidia_smi_memory_used_mebibytes",
+	"nvidia_smi_power_draw_watts",
+	"nvidia_smi_pstate",
+	"nvidia_smi_remapped_rows_correctable",
+	"nvidia_smi_remapped_rows_failure",
+	"nvidia_smi_remapped_rows_pending",
+	"nvidia_smi_remapped_rows_uncorrectable",
+	"nvidia_smi_retired_pages_double_bit_count",
+	"nvidia_smi_retired_pages_pending",
+	"nvidia_smi_temperature_gpu_celsius",
+	"nvidia_smi_temperature_memory_celsius",
+	"nvidia_smi_utilization_decoder_percent",
+	"nvidia_smi_utilization_encoder_percent",
+	"nvidia_smi_utilization_gpu_percent",
+	"nvidia_smi_utilization_memory_percent",
+	"nvml_gpm_sm_utilization_percent",
+	"process_cpu_utilization_ratio",
+	"process_memory_utilization_ratio",
+	"system_cpu_load_average_15m",
+	"system_cpu_load_average_1m",
+	"system_cpu_load_average_5m",
+	"system_cpu_logical_count",
+	"system_cpu_physical_count",
+	"system_cpu_time_seconds_total",
+	"system_disk_io_bytes_total",
+	"system_disk_io_time_seconds_total",
+	"system_disk_merged_total",
+	"system_disk_operations_total",
+	"system_disk_operation_time_seconds_total",
+	"system_disk_pending_operations",
+	"system_filesystem_inodes_usage",
+	"system_filesystem_usage_bytes",
+	"system_linux_memory_available_bytes",
+	"system_memory_limit_bytes",
+	"system_memory_linux_shared_bytes",
+	"system_memory_usage_bytes",
+	"system_memory_utilization_ratio",
+	"system_network_dropped_total",
+	"system_network_errors_total",
+	"system_network_io_bytes_total",
+	"system_network_packets_total",
+	"system_paging_usage_bytes",
+	"system_processes_count",
+	"system_uptime_seconds",
+}
+
+// TestExprsReadStoredNames: every series name an expression selects is one the
+// backend was seen to store, so a row does not read a name no backend has.
+func TestExprsReadStoredNames(t *testing.T) {
+	stored := map[string]bool{}
+	for _, n := range storedNames {
+		stored[n] = true
+	}
+	fill := strings.NewReplacer(monitoring.PlaceholderSelector, `entity_id="x"`, monitoring.PlaceholderRange, "1m")
+	for _, r := range Builtin() {
+		for _, exprs := range []map[string]string{r.Exprs, r.SplitExprs, r.ZeroFill} {
+			for collector, expr := range exprs {
+				node, err := parser.NewParser(parser.Options{}).ParseExpr(fill.Replace(expr))
+				if err != nil {
+					t.Fatalf("%s (%s): %v", r.Name, collector, err)
+				}
+				parser.Inspect(node, func(n parser.Node, _ []parser.Node) error {
+					vs, ok := n.(*parser.VectorSelector)
+					if !ok {
+						return nil
+					}
+					name := vs.Name
+					for _, m := range vs.LabelMatchers {
+						if m.Name == model.MetricNameLabel && m.Type == labels.MatchEqual {
+							name = m.Value
+						}
+					}
+					if !stored[name] {
+						t.Errorf("%s (%s) reads %q, which the backend does not store", r.Name, collector, name)
+					}
+					return nil
+				})
+			}
 		}
 	}
 }

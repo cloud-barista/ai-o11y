@@ -15,10 +15,10 @@ import (
 // PCI address for a GPU nvidia-smi did not name.
 func TestXIDErrors(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
-  {__name__="nvidia_kmsg.xid.errors",entity_id="a",uuid="GPU-1",xid="79"} 1 1 2x18
-  {__name__="nvidia_kmsg.xid.errors",entity_id="a",uuid="GPU-1",xid="31"} 1x20
-  {__name__="nvidia_kmsg.xid.errors",entity_id="a","pci.bus_id"="0000:86:00",xid="48"} 1x20
-  {__name__="nvidia_kmsg.xid.errors",entity_id="b",uuid="GPU-2",xid="13"} 4x20
+  {__name__="nvidia_kmsg_xid_errors_total",entity_id="a",uuid="GPU-1",xid="79"} 1 1 2x18
+  {__name__="nvidia_kmsg_xid_errors_total",entity_id="a",uuid="GPU-1",xid="31"} 1x20
+  {__name__="nvidia_kmsg_xid_errors_total",entity_id="a",pci_bus_id="0000:86:00",xid="48"} 1x20
+  {__name__="nvidia_kmsg_xid_errors_total",entity_id="b",uuid="GPU-2",xid="13"} 4x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st,

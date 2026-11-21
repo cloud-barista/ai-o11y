@@ -1,0 +1,105 @@
+# One VM's part of a SeaweedFS cluster spread over three VMs: a master, a
+# volume server and a filer with its S3 gateway on every VM, and the MariaDB
+# the filers keep their metadata in on the VM whose COMPOSE_PROFILES has "db".
+# Every VM runs this same file with its own .env (SELF_ADDR, ../README.md).
+#
+# Host networking: each part listens on SELF_ADDR, the VM's own address, which
+# the other VMs reach it at.
+name: aio11y-seaweedfs
+
+x-seaweedfs: &seaweedfs
+  image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION}
+  restart: unless-stopped
+  network_mode: host
+
+services:
+  # The three masters elect a leader by Raft and keep working with one down.
+  # New volumes get SEAWEEDFS_REPLICATION; the leader restores missing copies
+  # (../master.toml).
+  master:
+    <<: *seaweedfs
+    command:
+      - master
+      - -ip=${SELF_ADDR}
+      - -ip.bind=${SELF_ADDR}
+      - -port=9333
+      - -mdir=/data
+      - -peers=${VM1_ADDR}:9333,${VM2_ADDR}:9333,${VM3_ADDR}:9333
+      - -defaultReplication=${SEAWEEDFS_REPLICATION}
+      - -volumeSizeLimitMB=${SEAWEEDFS_VOLUME_SIZE_MB}
+    volumes:
+      - master:/data
+      - ../master.toml:/etc/seaweedfs/master.toml:ro
+
+  # Every volume server is in the same rack and data center, so replication
+  # 001 puts the copies of a volume on two different VMs.
+  volume:
+    <<: *seaweedfs
+    command:
+      - volume
+      - -ip=${SELF_ADDR}
+      - -ip.bind=${SELF_ADDR}
+      - -port=8080
+      - -dir=/data
+      - -max=0
+      - -dataCenter=dc1
+      - -rack=rack1
+      - -master=${VM1_ADDR}:9333,${VM2_ADDR}:9333,${VM3_ADDR}:9333
+    volumes: [volume:/data]
+    depends_on: [master]
+
+  # A filer with its S3 gateway (port 8333). Every filer keeps its metadata in
+  # the one MariaDB (../filer.toml), so each one serves every file. It retries
+  # until that MariaDB is up.
+  filer:
+    <<: *seaweedfs
+    command:
+      - filer
+      - -ip=${SELF_ADDR}
+      - -ip.bind=${SELF_ADDR}
+      - -port=8888
+      - -s3
+      - -s3.port=8333
+      - -master=${VM1_ADDR}:9333,${VM2_ADDR}:9333,${VM3_ADDR}:9333
+    environment:
+      WEED_MYSQL2_HOSTNAME: ${DB_ADDR}
+      WEED_MYSQL2_DATABASE: seaweedfs
+      WEED_MYSQL2_USERNAME: ${SEAWEEDFS_DB_USER}
+      WEED_MYSQL2_PASSWORD: ${SEAWEEDFS_DB_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    volumes:
+      - ../filer.toml:/etc/seaweedfs/filer.toml:ro
+    depends_on: [master]
+
+  # Creates the bucket once a filer is up; an existing bucket is kept, so every
+  # VM may run it.
+  bucket:
+    <<: *seaweedfs
+    restart: on-failure
+    entrypoint: [sh, -c]
+    command:
+      - >-
+        echo "s3.bucket.list" | weed shell -master=${VM1_ADDR}:9333,${VM2_ADDR}:9333,${VM3_ADDR}:9333 | grep -q "^  ${S3_BUCKET}[[:space:]]" ||
+        echo "s3.bucket.create -name ${S3_BUCKET}" | weed shell -master=${VM1_ADDR}:9333,${VM2_ADDR}:9333,${VM3_ADDR}:9333
+    depends_on: [filer, volume]
+
+  mariadb:
+    image: mariadb:${MARIADB_VERSION}
+    profiles: [db]
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - --bind-address=${SELF_ADDR}
+      - --port=3306
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: seaweedfs
+      MARIADB_USER: ${SEAWEEDFS_DB_USER}
+      MARIADB_PASSWORD: ${SEAWEEDFS_DB_PASSWORD}
+    volumes: [mariadb:/var/lib/mysql]
+
+volumes:
+  master:
+  volume:
+  mariadb:

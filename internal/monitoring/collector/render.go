@@ -65,8 +65,8 @@ const WritePasswordEnv = "AIO11Y_WRITE_PASSWORD"
 // Render builds the collector configuration for one target: the fragments of
 // every agent-path kind that applies to it, the processor that stamps its
 // identity labels, the memory limiter, and one metrics pipeline to the
-// endpoints: one endpoint as one exporter, several behind a failover connector
-// (see exportTo). Two
+// endpoints: one endpoint as one exporter, several as opts.WriteMode says (see
+// exportTo). Two
 // fragments that define the same component id are an error rather than one
 // silently replacing the other. The output is YAML with sorted keys, so the same
 // inputs always render the same bytes.
@@ -137,12 +137,15 @@ func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.
 	if storageDir == "" {
 		storageDir = DefaultStorageDir
 	}
-	out := exportTo(endpoints, storageDir)
+	out, err := exportTo(endpoints, opts.WriteMode, storageDir)
+	if err != nil {
+		return nil, err
+	}
 	pipelines := map[string]any{
 		"metrics": map[string]any{
 			"receivers":  slices.Sorted(maps.Keys(receivers)),
 			"processors": pipelineProcessors,
-			"exporters":  []string{out.head},
+			"exporters":  out.heads,
 		},
 	}
 	maps.Copy(pipelines, out.pipelines)
@@ -165,11 +168,11 @@ func Render(t monitoring.Target, kinds []monitoring.CollectorKind, c monitoring.
 	return yaml.Marshal(cfg)
 }
 
-// output is where the metrics pipeline ends: head is the component it exports
-// to, with the exporters, connectors, extensions and extra pipelines that come
-// with it.
+// output is where the metrics pipeline ends: heads are the components it
+// exports to, with the exporters, connectors, extensions and extra pipelines
+// that come with them.
 type output struct {
-	head       string
+	heads      []string
 	exporters  map[string]any
 	connectors map[string]any
 	extensions map[string]any
@@ -177,23 +180,51 @@ type output struct {
 }
 
 // exportTo writes the endpoints. One endpoint is one exporter that keeps what
-// it cannot send in the disk queue under storageDir (see keepOnDisk). Several
-// are one exporter each, in a pipeline per priority behind the failover
-// connector, as the connector documentation sets them up: every exporter but
-// the last has its queue and retries off, so a failure reaches the connector,
-// which then moves to the next endpoint and goes back to the first once it
-// answers again. The last keeps what it cannot send on disk, so samples are
-// kept while every endpoint fails.
-func exportTo(endpoints []monitoring.Endpoint, storageDir string) output {
+// it cannot send in the disk queue under storageDir (see keepOnDisk), whatever
+// the mode.
+//
+// With WriteAll, several are one exporter each, every one in the metrics
+// pipeline and keeping what it cannot send on disk: each endpoint gets every
+// sample, and one that fails catches up from its queue when it answers again
+// while the others go on. The exporters share one file storage extension,
+// which keeps each exporter's queue in a file of its own, each bounded by
+// QueueSizeBytes.
+//
+// With WriteFailover, several are one exporter each, in a pipeline per
+// priority behind the failover connector, as the connector documentation sets
+// them up: every exporter but the last has its queue and retries off, so a
+// failure reaches the connector, which then moves to the next endpoint and
+// goes back to the first once it answers again. The last keeps what it cannot
+// send on disk, so samples are kept while every endpoint fails. The connector
+// tries the endpoints again only every retry_interval (10m by default), so it
+// is set to one collection interval: sending goes back to the first endpoint
+// within one interval of it answering again rather than up to ten minutes
+// later.
+func exportTo(endpoints []monitoring.Endpoint, mode WriteMode, storageDir string) (output, error) {
 	queue := map[string]any{"directory": storageDir, "create_directory": true}
 	if len(endpoints) == 1 {
-		out := output{head: ExporterOTLPHTTP, extensions: map[string]any{ExtensionQueueStorage: queue}}
+		out := output{heads: []string{ExporterOTLPHTTP}, extensions: map[string]any{ExtensionQueueStorage: queue}}
 		cfg := exporterConfig(endpoints[0], ExtensionBasicAuth, out.extensions)
 		keepOnDisk(cfg)
 		out.exporters = map[string]any{ExporterOTLPHTTP: cfg}
-		return out
+		return out, nil
 	}
-	out := output{head: ConnectorFailover, exporters: map[string]any{}, extensions: map[string]any{}, pipelines: map[string]any{}}
+	switch mode {
+	case WriteAll:
+		out := output{exporters: map[string]any{}, extensions: map[string]any{ExtensionQueueStorage: queue}}
+		for i, e := range endpoints {
+			exporter := fmt.Sprintf("%s/%d", ExporterOTLPHTTP, i)
+			cfg := exporterConfig(e, fmt.Sprintf("%s/%d", ExtensionBasicAuth, i), out.extensions)
+			keepOnDisk(cfg)
+			out.exporters[exporter] = cfg
+			out.heads = append(out.heads, exporter)
+		}
+		return out, nil
+	case WriteFailover, "":
+	default:
+		return output{}, fmt.Errorf("unknown write mode %q", mode)
+	}
+	out := output{heads: []string{ConnectorFailover}, exporters: map[string]any{}, extensions: map[string]any{}, pipelines: map[string]any{}}
 	levels := make([]any, 0, len(endpoints))
 	for i, e := range endpoints {
 		exporter := fmt.Sprintf("%s/%d", ExporterOTLPHTTP, i)
@@ -213,8 +244,11 @@ func exportTo(endpoints []monitoring.Endpoint, storageDir string) output {
 		}
 		levels = append(levels, []string{pipeline})
 	}
-	out.connectors = map[string]any{ConnectorFailover: map[string]any{"priority_levels": levels}}
-	return out
+	out.connectors = map[string]any{ConnectorFailover: map[string]any{
+		"priority_levels": levels,
+		"retry_interval":  DefaultInterval.String(),
+	}}
+	return out, nil
 }
 
 // keepOnDisk makes the exporter cfg queue what it sends in the disk queue
@@ -239,7 +273,7 @@ func keepOnDisk(cfg map[string]any) {
 // extension under authID to extensions, its password taken from the
 // collector host's environment when the collector starts.
 func exporterConfig(e monitoring.Endpoint, authID string, extensions map[string]any) map[string]any {
-	cfg := map[string]any{"endpoint": e.URL}
+	cfg := map[string]any{"metrics_endpoint": e.URL}
 	if len(e.Headers) > 0 {
 		cfg["headers"] = maps.Clone(e.Headers)
 	}
@@ -265,6 +299,9 @@ func mergeInto(dst, src map[string]any, kind string) error {
 
 // Options are deployment-wide settings of the rendered configuration.
 type Options struct {
+	// WriteMode is how a collector uses several write endpoints. Empty is
+	// WriteFailover.
+	WriteMode WriteMode
 	// TelemetryPort is the localhost port the collector serves its own
 	// metrics on (Prometheus format). Zero turns them off, so the collector
 	// opens no port another collector on the host may already hold; nothing
@@ -274,6 +311,19 @@ type Options struct {
 	// kept in; the collector creates it. Empty is DefaultStorageDir.
 	StorageDir string
 }
+
+// WriteMode is how a collector uses several write endpoints.
+type WriteMode string
+
+const (
+	// WriteFailover sends to the first endpoint and moves to the next while
+	// it fails: for endpoints in front of storage that replicates by itself
+	// (Thanos Receive, vmagent).
+	WriteFailover WriteMode = "failover"
+	// WriteAll sends every sample to every endpoint: for stores that each
+	// keep a full copy and do not replicate (a pair of Prometheus servers).
+	WriteAll WriteMode = "all"
+)
 
 // telemetry is the collector's own telemetry section.
 func telemetry(port int) map[string]any {

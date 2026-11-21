@@ -82,7 +82,7 @@ type fakeBackend struct {
 }
 
 func (f *fakeBackend) WriteEndpoints() []monitoring.Endpoint {
-	return []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp", Protocol: "otlp_http"}}
+	return []monitoring.Endpoint{{URL: "http://prometheus:9090/api/v1/otlp/v1/metrics", Protocol: "otlp_http"}}
 }
 func (f *fakeBackend) Query(_ context.Context, q monitoring.QuerySpec) ([]monitoring.Series, error) {
 	f.got = q
@@ -181,7 +181,7 @@ func TestTargetReads(t *testing.T) {
 		t.Errorf("get unknown = %d", code)
 	}
 	code, body = call(t, s, http.MethodGet, "/targets/k1/collectorConfig", "")
-	if code != http.StatusOK || !strings.Contains(body, "entity_id") || !strings.Contains(body, "http://prometheus:9090/api/v1/otlp") {
+	if code != http.StatusOK || !strings.Contains(body, "entity_id") || !strings.Contains(body, "http://prometheus:9090/api/v1/otlp/v1/metrics") {
 		t.Errorf("collector config = %d %s", code, body)
 	}
 	if code, _ = call(t, s, http.MethodDelete, "/targets/k1", ""); code != http.StatusOK {

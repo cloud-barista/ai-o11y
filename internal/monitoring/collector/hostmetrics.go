@@ -91,7 +91,7 @@ func metricNames(expr string) ([]string, error) {
 			names = append(names, vs.Name)
 			return nil
 		}
-		// A quoted name, {"system.cpu.time"}, is a __name__ matcher.
+		// A quoted name, {"a.b"}, is a __name__ matcher.
 		for _, m := range vs.LabelMatchers {
 			if m.Name == model.MetricNameLabel && m.Type == labels.MatchEqual {
 				names = append(names, m.Value)

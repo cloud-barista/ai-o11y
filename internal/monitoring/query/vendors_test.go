@@ -19,29 +19,29 @@ import (
 // virtual function, whose amd-smi gives usage and power as N/A.
 func TestGPUFieldsOfBothVendors(t *testing.T) {
 	st := promqltest.LoadedStorage(t, `load 30s
-  {__name__="nvidia_smi.utilization.gpu",entity_id="n",uuid="GPU-N1",index="0"} 70x20
-  {__name__="nvidia_smi.utilization.encoder",entity_id="n",uuid="GPU-N1",index="0"} 10x20
-  {__name__="nvidia_smi.utilization.decoder",entity_id="n",uuid="GPU-N1",index="0"} 0x20
-  {__name__="nvidia_smi.memory.used",entity_id="n",uuid="GPU-N1",index="0"} 1024x20
-  {__name__="nvidia_smi.memory.total",entity_id="n",uuid="GPU-N1",index="0"} 4096x20
-  {__name__="nvidia_smi.power.draw",entity_id="n",uuid="GPU-N1",index="0"} 70x20
-  {__name__="amd_smi.usage.gfx_activity",entity_id="m",uuid="amd-1",index="0"} 60x20
-  {__name__="amd_smi.usage.mm_activity",entity_id="m",uuid="amd-1",index="0"} 30x20
-  {__name__="amd_smi.mem_usage.used_vram",entity_id="m",uuid="amd-1",index="0"} 2048x20
-  {__name__="amd_smi.mem_usage.total_vram",entity_id="m",uuid="amd-1",index="0"} 8192x20
-  {__name__="amd_smi.power.socket_power",entity_id="m",uuid="amd-1",index="0"} 100x20
-  {__name__="nvidia_smi.utilization.gpu",entity_id="x",uuid="GPU-X1",index="0"} 20x20
-  {__name__="nvidia_smi.utilization.encoder",entity_id="x",uuid="GPU-X1",index="0"} 5x20
-  {__name__="nvidia_smi.utilization.decoder",entity_id="x",uuid="GPU-X1",index="0"} 0x20
-  {__name__="nvidia_smi.memory.used",entity_id="x",uuid="GPU-X1",index="0"} 512x20
-  {__name__="nvidia_smi.memory.total",entity_id="x",uuid="GPU-X1",index="0"} 4096x20
-  {__name__="nvidia_smi.power.draw",entity_id="x",uuid="GPU-X1",index="0"} 30x20
-  {__name__="amd_smi.usage.gfx_activity",entity_id="x",uuid="amd-x",index="0"} 80x20
-  {__name__="amd_smi.mem_usage.used_vram",entity_id="x",uuid="amd-x",index="0"} 1024x20
-  {__name__="amd_smi.mem_usage.total_vram",entity_id="x",uuid="amd-x",index="0"} 4096x20
-  {__name__="amd_smi.power.socket_power",entity_id="x",uuid="amd-x",index="0"} 50x20
-  {__name__="amd_smi.mem_usage.used_vram",entity_id="v",uuid="amd-v",index="0"} 227x20
-  {__name__="amd_smi.mem_usage.total_vram",entity_id="v",uuid="amd-v",index="0"} 4448x20
+  {__name__="nvidia_smi_utilization_gpu_percent",entity_id="n",uuid="GPU-N1",index="0"} 70x20
+  {__name__="nvidia_smi_utilization_encoder_percent",entity_id="n",uuid="GPU-N1",index="0"} 10x20
+  {__name__="nvidia_smi_utilization_decoder_percent",entity_id="n",uuid="GPU-N1",index="0"} 0x20
+  {__name__="nvidia_smi_memory_used_mebibytes",entity_id="n",uuid="GPU-N1",index="0"} 1024x20
+  {__name__="nvidia_smi_memory_total_mebibytes",entity_id="n",uuid="GPU-N1",index="0"} 4096x20
+  {__name__="nvidia_smi_power_draw_watts",entity_id="n",uuid="GPU-N1",index="0"} 70x20
+  {__name__="amd_smi_usage_gfx_activity_percent",entity_id="m",uuid="amd-1",index="0"} 60x20
+  {__name__="amd_smi_usage_mm_activity_percent",entity_id="m",uuid="amd-1",index="0"} 30x20
+  {__name__="amd_smi_mem_usage_used_vram_mebibytes",entity_id="m",uuid="amd-1",index="0"} 2048x20
+  {__name__="amd_smi_mem_usage_total_vram_mebibytes",entity_id="m",uuid="amd-1",index="0"} 8192x20
+  {__name__="amd_smi_power_socket_power_watts",entity_id="m",uuid="amd-1",index="0"} 100x20
+  {__name__="nvidia_smi_utilization_gpu_percent",entity_id="x",uuid="GPU-X1",index="0"} 20x20
+  {__name__="nvidia_smi_utilization_encoder_percent",entity_id="x",uuid="GPU-X1",index="0"} 5x20
+  {__name__="nvidia_smi_utilization_decoder_percent",entity_id="x",uuid="GPU-X1",index="0"} 0x20
+  {__name__="nvidia_smi_memory_used_mebibytes",entity_id="x",uuid="GPU-X1",index="0"} 512x20
+  {__name__="nvidia_smi_memory_total_mebibytes",entity_id="x",uuid="GPU-X1",index="0"} 4096x20
+  {__name__="nvidia_smi_power_draw_watts",entity_id="x",uuid="GPU-X1",index="0"} 30x20
+  {__name__="amd_smi_usage_gfx_activity_percent",entity_id="x",uuid="amd-x",index="0"} 80x20
+  {__name__="amd_smi_mem_usage_used_vram_mebibytes",entity_id="x",uuid="amd-x",index="0"} 1024x20
+  {__name__="amd_smi_mem_usage_total_vram_mebibytes",entity_id="x",uuid="amd-x",index="0"} 4096x20
+  {__name__="amd_smi_power_socket_power_watts",entity_id="x",uuid="amd-x",index="0"} 50x20
+  {__name__="amd_smi_mem_usage_used_vram_mebibytes",entity_id="v",uuid="amd-v",index="0"} 227x20
+  {__name__="amd_smi_mem_usage_total_vram_mebibytes",entity_id="v",uuid="amd-v",index="0"} 4448x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	at := time.Unix(0, 0).UTC().Add(10 * time.Minute)
@@ -169,8 +169,8 @@ func mustRow(t *testing.T, p Planner, id string) monitoring.MetricRow {
 // collector name order, each with its window, under Across.
 func TestRenderJoinsCollectors(t *testing.T) {
 	r := renderer(t)
-	amd := `max by (entity_id, uuid) ({"amd_smi.power.socket_power", entity_id=~"a|b"})`
-	nvidia := `max by (entity_id, uuid) ({"nvidia_smi.power.draw", entity_id=~"a|b"})`
+	amd := `max by (entity_id, uuid) (amd_smi_power_socket_power_watts{entity_id=~"a|b"})`
+	nvidia := `max by (entity_id, uuid) (nvidia_smi_power_draw_watts{entity_id=~"a|b"})`
 	for i := 0; i < 10; i++ {
 		got, err := r.Render(monitoring.QuerySpec{Metric: "hw.power", Targets: targets("b", "a"),
 			Window: monitoring.Agg{Fn: monitoring.AggMax, Range: time.Hour}, Across: monitoring.AggSum})
@@ -184,31 +184,31 @@ func TestRenderJoinsCollectors(t *testing.T) {
 // TestSplitLeavesOutACollectorWithoutIt: a collector with no split
 // expression is left out of a split query and kept in the default one.
 func TestSplitLeavesOutACollectorWithoutIt(t *testing.T) {
-	gpu := func(name string) string { return `max by (entity_id, uuid) ({"` + name + `", $sel}) / 100` }
+	gpu := func(name string) string { return `max by (entity_id, uuid) (` + name + `{$sel}) / 100` }
 	row := monitoring.MetricRow{
 		Name: "test.gpu.busy", Area: "gpu", Unit: "1", Kind: monitoring.KindGauge,
 		Exprs: map[string]string{
-			catalog.CollectorNvidiaSMI: gpu("nvidia_smi.utilization.gpu"),
-			catalog.CollectorAMDSMI:    gpu("amd_smi.usage.gfx_activity"),
+			catalog.CollectorNvidiaSMI: gpu("nvidia_smi_utilization_gpu_percent"),
+			catalog.CollectorAMDSMI:    gpu("amd_smi_usage_gfx_activity_percent"),
 		},
 		Attribute: &monitoring.Attribute{Name: "hw.gpu.task", Values: []string{"general"}},
-		SplitExprs: map[string]string{catalog.CollectorNvidiaSMI: `label_replace(` + gpu("nvidia_smi.utilization.gpu") +
+		SplitExprs: map[string]string{catalog.CollectorNvidiaSMI: `label_replace(` + gpu("nvidia_smi_utilization_gpu_percent") +
 			`, "hw.gpu.task", "general", "", "")`},
 		Dimension: "uuid", DimensionName: "hw.id",
 	}
 	mismatched := row
 	mismatched.Name, mismatched.Attribute, mismatched.SplitExprs = "test.gpu.mismatched", nil, nil
 	mismatched.Exprs = map[string]string{
-		catalog.CollectorNvidiaSMI: gpu("nvidia_smi.utilization.gpu"),
-		catalog.CollectorAMDSMI:    `max by (entity_id) ({"amd_smi.usage.gfx_activity", $sel}) / 100`,
+		catalog.CollectorNvidiaSMI: gpu("nvidia_smi_utilization_gpu_percent"),
+		catalog.CollectorAMDSMI:    `max by (entity_id) (amd_smi_usage_gfx_activity_percent{$sel}) / 100`,
 	}
 	c, err := catalog.New([]monitoring.MetricRow{row, mismatched})
 	if err != nil {
 		t.Fatal(err)
 	}
 	st := promqltest.LoadedStorage(t, `load 30s
-  {__name__="nvidia_smi.utilization.gpu",entity_id="x",uuid="GPU-X1"} 20x20
-  {__name__="amd_smi.usage.gfx_activity",entity_id="x",uuid="amd-x"} 80x20
+  {__name__="nvidia_smi_utilization_gpu_percent",entity_id="x",uuid="GPU-X1"} 20x20
+  {__name__="amd_smi_usage_gfx_activity_percent",entity_id="x",uuid="amd-x"} 80x20
 `)
 	t.Cleanup(func() { _ = st.Close() })
 	runner := &engineRunner{t: t, engine: promqltest.NewTestEngine(t, false, 5*time.Minute, 50_000_000), storage: st,
