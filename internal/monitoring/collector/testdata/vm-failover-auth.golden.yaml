@@ -18,9 +18,14 @@ exporters:
             authenticator: basicauth/1
         metrics_endpoint: http://vmauth-2:8427/opentelemetry/v1/metrics
         retry_on_failure:
-            enabled: false
+            enabled: true
+            max_elapsed_time: 0s
         sending_queue:
-            enabled: false
+            enabled: true
+            num_consumers: 1
+            queue_size: 268435456
+            sizer: bytes
+            storage: file_storage/queue
 extensions:
     basicauth/0:
         client_auth:
@@ -30,6 +35,9 @@ extensions:
         client_auth:
             password: ${env:AIO11Y_WRITE_PASSWORD}
             username: writer
+    file_storage/queue:
+        create_directory: true
+        directory: /var/lib/aio11y-otelcol/queue
 processors:
     attributes/identity:
         actions:
@@ -37,6 +45,15 @@ processors:
               key: entity_id
               value: d44ikdomt0tac4ejrmmg
     batch: {}
+    memory_limiter:
+        check_interval: 1s
+        limit_mib: 400
+        spike_limit_mib: 100
+    top_process:
+        by:
+            - cpu
+            - memory
+        top_n: 10
 receivers:
     host_metrics:
         collection_interval: 30s
@@ -60,17 +77,31 @@ receivers:
                         enabled: true
             network: {}
             paging: {}
+            process:
+                metrics:
+                    process.cpu.utilization:
+                        enabled: true
+                    process.memory.utilization:
+                        enabled: true
+                mute_process_cgroup_error: true
+                mute_process_exe_error: true
+                mute_process_io_error: true
+                mute_process_name_error: true
+                mute_process_user_error: true
             processes: {}
             system: {}
 service:
     extensions:
         - basicauth/0
         - basicauth/1
+        - file_storage/queue
     pipelines:
         metrics:
             exporters:
                 - failover
             processors:
+                - memory_limiter
+                - top_process
                 - attributes/identity
                 - batch
             receivers:

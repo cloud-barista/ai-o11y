@@ -8,7 +8,7 @@ lists it for one target.
 ## Principles
 
 1. **Collectors keep their own names.** The OpenTelemetry hostmetrics receiver,
-   `nvidia-smi` or NVML write metrics under the names they define. ai-o11y does
+   `nvidia-smi`, `amd-smi` or NVML write metrics under the names they define. ai-o11y does
    not rename them at collection time.
 2. **The catalog maps them to fields.** Each field says, per collector, which
    PromQL computes it from that collector's series.
@@ -45,10 +45,11 @@ Answers carry `entity_id` and the attributes by their OpenTelemetry names.
 Expressions read the series under the names the backend stores: the
 Prometheus names every supported backend gives an OTLP metric, dots turned
 into underscores and the unit and `_total` appended (`system.cpu.time` in
-seconds is `system_cpu_time_seconds_total`). Collector attribute names have no
-dots and stay as sent (`state`). The attributes ai-o11y answers with keep
-their OpenTelemetry names; inside PromQL a name with dots is quoted
-(`by ("cpu.mode")`).
+seconds is `system_cpu_time_seconds_total`). Most collector attribute names
+have no dots and stay as sent (`state`); one with dots is stored with
+underscores too (`process.executable.name` as `process_executable_name`). The
+attributes ai-o11y answers with keep their OpenTelemetry names; inside PromQL a
+name with dots is quoted (`by ("cpu.mode")`).
 
 ## Zero values
 
@@ -60,7 +61,39 @@ The default is off.
 
 ## Fields
 
-GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpureceiver`), which reads `nvidia-smi` and writes each query field as `nvidia_smi.<field>` with nvidia-smi's unit, stored as `nvidia_smi_<field>_<unit>` (`nvidia_smi_utilization_gpu_percent`). Within a target they are split by the GPU's UUID, `hw.id` for common fields and `uuid` for nvidia-smi's own.
+Process fields come from the hostmetrics process scraper, which describes each process on its resource (`process.pid`, `process.executable.name`, ...). The collector sends them only for the busiest processes: its top process processor (`otelcol/processor/topprocessprocessor`) keeps, per collection, the 10 processes that used the most CPU time since the previous collection and the 10 with the most resident memory, and drops the rest. It copies `process.executable.name` and `process.pid` onto every data point it keeps, because Prometheus does not turn resource attributes into series labels (VictoriaMetrics does, and keeps one label per name); they are stored as `process_executable_name` and `process_pid`. The name is what the fields are split by; the pid keeps two processes of the same name apart, which would otherwise write the same series. The fields add up the processes of one name, so `process.cpu.utilization` and `process.memory.utilization` of `postgres` cover every `postgres` process among those sent. A process that is not among the busiest in a collection has no sample for it. hostmetrics divides `process.cpu.utilization` by the host's logical CPUs, as the semantic conventions do, and reports `process.memory.utilization` as a percentage under unit 1, which the field divides by 100; they are stored as `process_cpu_utilization_ratio` and `process_memory_utilization_ratio`.
+
+GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpureceiver`), which reads `nvidia-smi` and writes each query field as `nvidia_smi.<field>` with nvidia-smi's unit, stored as `nvidia_smi_<field>_<unit>` (`nvidia_smi_utilization_gpu_percent`), and its AMD GPU receiver (`otelcol/receiver/amdgpureceiver`), which reads `amd-smi metric --json` and writes each value as `amd_smi.<path in the JSON>` with its unit, stored as `amd_smi_<path>_<unit>` (`amd_smi_usage_gfx_activity_percent`). Both put the GPU's `index`, `uuid` and `name` on every point. Within a target GPU fields are split by the GPU's UUID, `hw.id` for common fields and `uuid` for a collector's own.
+
+The NVIDIA GPU receiver also counts the XID errors the NVIDIA driver logs to the kernel log (`NVRM: Xid (PCI:0000:3b:00): 79, ...`), reading `/dev/kmsg`, as `nvidia_kmsg.xid.errors`, a monotonic sum stored as `nvidia_kmsg_xid_errors_total`: a cumulative count since boot with the XID number in `xid` and the GPU's `uuid`, found by matching the line's PCI address to `nvidia-smi`'s `pci.bus_id`. A line whose address `nvidia-smi` did not name keeps the address as written in `pci.bus_id` (stored as `pci_bus_id`) instead. The count goes as far back as the kernel's log buffer holds, and a collector that restarts counts the same lines again. `nvidia_kmsg:xid.errors` adds up the XID numbers per GPU; a GPU with no XID has no series rather than 0.
+
+With `gpm` on, which ai-o11y renders for every NVIDIA VM, the NVIDIA GPU receiver also runs its helper `aio11y-gpm` (`otelcol/cmd/aio11y-gpm`) each collection to read NVML GPM, which only Hopper and later GPUs have, and writes each GPM value as `nvml.<field>` in percent (`nvml.gpm.sm.utilization`, ...), stored as `nvml_<field>_percent` (`nvml_gpm_sm_utilization_percent`): one point per GPU with the GPU's `index`, `uuid` and `name`, and one per MIG instance that adds `mig` `"true"`, `gpu_instance_id` and, when NVML gives it, `mig.uuid` (stored as `mig_uuid`). Where the helper is not installed or the GPU has no GPM, these are left out and the rest is collected. `nvml:mig.sm.utilization` is `nvml_gpm_sm_utilization_percent` of the MIG instance points divided by 100, split within a target by the GPU's `uuid` and `gpu_instance_id`; `within` collapses the GPU instances of each GPU. It has not been checked on a GPU that has GPM yet.
+
+The AMD GPU receiver writes these, leaving out a value amd-smi gives as `N/A` or in another unit (amd-smi's `MB` is MiB):
+
+| Metric | Unit | Stored as |
+|---|---|---|
+| `amd_smi.usage.gfx_activity`, `amd_smi.usage.umc_activity`, `amd_smi.usage.mm_activity` | % | `amd_smi_usage_<field>_percent` |
+| `amd_smi.mem_usage.{total,used,free}_vram`, `amd_smi.mem_usage.{total,used,free}_visible_vram`, `amd_smi.mem_usage.{total,used,free}_gtt` | MiBy | `amd_smi_mem_usage_<field>_mebibytes` |
+| `amd_smi.power.socket_power` | W | `amd_smi_power_socket_power_watts` |
+| `amd_smi.power.gfx_voltage`, `amd_smi.power.soc_voltage`, `amd_smi.power.mem_voltage` | mV | `amd_smi_power_<field>_mV` |
+| `amd_smi.energy.total_energy_consumption` | J | `amd_smi_energy_total_energy_consumption_joules` |
+| `amd_smi.temperature.edge`, `amd_smi.temperature.hotspot`, `amd_smi.temperature.mem` | Cel | `amd_smi_temperature_<field>_celsius` |
+| `amd_smi.clock.<domain>.clk`, one per clock domain (`gfx_0`, `mem_0`, `vclk_0`, ...) | MHz | `amd_smi_clock_<domain>_clk_MHz` |
+| `amd_smi.pcie.width`, `amd_smi.pcie.replay_count` |  | `amd_smi_pcie_<field>` |
+| `amd_smi.ecc.total_correctable_count`, `amd_smi.ecc.total_uncorrectable_count`, `amd_smi.ecc.total_deferred_count` |  | `amd_smi_ecc_<field>` |
+
+The common GPU fields are read from both receivers:
+
+| Field | nvidia-smi | amd-smi |
+|---|---|---|
+| `hw.gpu.utilization` | `utilization.gpu` / 100 (general); `utilization.encoder`, `utilization.decoder` / 100 | `usage.gfx_activity` / 100 (general only) |
+| `hw.gpu.memory.usage` | `memory.used` MiB in bytes | `mem_usage.used_vram` MiB in bytes |
+| `hw.gpu.memory.limit` | `memory.total` MiB in bytes | `mem_usage.total_vram` MiB in bytes |
+| `hw.gpu.memory.utilization` | `memory.used` / `memory.total` | `mem_usage.used_vram` / `mem_usage.total_vram` |
+| `hw.power` | `power.draw` | `power.socket_power` |
+
+A query of one of them evaluates each receiver's expression, with its window, and joins the two with PromQL `or` before `within`, `across` and `topK`, so it answers the GPUs of both vendors together, also on a VM with one of each. amd-smi reports no encoder or decoder share of its own (`usage.mm_activity` is the multimedia engine's, not split by task), so `hw.gpu.task` `encoder` and `decoder` answer NVIDIA GPUs only. Where amd-smi gives a value as `N/A`, such as `usage` and `power` on the Radeon PRO V710 virtual function, the field has no series for that GPU.
 
 | Field | Schema | Unit | Attribute (values) | Dimension | Provided |
 |---|---|---|---|---|---|
@@ -95,8 +128,8 @@ GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpur
 | `system.cpu.load_average.5m` | hostmetrics | {thread} |  |  | yes |
 | `system.cpu.load_average.15m` | hostmetrics | {thread} |  |  | yes |
 | `system.process.count` | common | {process} | `process.state` (running, sleeping, stopped, defunct, blocked, idle) |  | yes |
-| `process.cpu.utilization` | common | 1 |  | `process.executable.name` | no: per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name) |
-| `process.memory.utilization` | common | 1 |  | `process.executable.name` | no: per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name) |
+| `process.cpu.utilization` | common | 1 |  | `process.executable.name` | yes |
+| `process.memory.utilization` | common | 1 |  | `process.executable.name` | yes |
 | `hw.gpu.utilization` | common | 1 | `hw.gpu.task` (general, encoder, decoder) | `hw.id` | yes |
 | `hw.gpu.memory.usage` | common | By |  | `hw.id` | yes |
 | `hw.gpu.memory.limit` | common | By |  | `hw.id` | yes |
@@ -120,8 +153,22 @@ GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpur
 | `remapped_rows.uncorrectable` | nvidia_smi | {row} |  | `uuid` | yes |
 | `remapped_rows.pending` | nvidia_smi |  |  | `uuid` | yes |
 | `remapped_rows.failure` | nvidia_smi |  |  | `uuid` | yes |
-| `mig.sm.utilization` | nvml | 1 |  |  | no: the GPU receiver has no NVML source yet; nvidia-smi does not report it |
-| `xid.errors` | nvml | {error} |  |  | no: the GPU receiver has no NVML source yet; nvidia-smi does not report it |
+| `usage.umc_activity` | amd_smi | % |  | `uuid` | yes |
+| `usage.mm_activity` | amd_smi | % |  | `uuid` | yes |
+| `temperature.edge` | amd_smi | Cel |  | `uuid` | yes |
+| `temperature.hotspot` | amd_smi | Cel |  | `uuid` | yes |
+| `temperature.mem` | amd_smi | Cel |  | `uuid` | yes |
+| `clock.gfx_0.clk` | amd_smi | MHz |  | `uuid` | yes |
+| `clock.mem_0.clk` | amd_smi | MHz |  | `uuid` | yes |
+| `mem_usage.used_gtt` | amd_smi | MiBy |  | `uuid` | yes |
+| `mem_usage.total_gtt` | amd_smi | MiBy |  | `uuid` | yes |
+| `energy.total_energy_consumption` | amd_smi | J |  | `uuid` | yes |
+| `pcie.replay_count` | amd_smi |  |  | `uuid` | yes |
+| `ecc.total_correctable_count` | amd_smi | {error} |  | `uuid` | yes |
+| `ecc.total_uncorrectable_count` | amd_smi | {error} |  | `uuid` | yes |
+| `ecc.total_deferred_count` | amd_smi | {error} |  | `uuid` | yes |
+| `xid.errors` | nvidia_kmsg | {error} |  | `uuid` | yes |
+| `mig.sm.utilization` | nvml | 1 |  | `gpu_instance_id` | yes |
 
 ## Known limits
 
@@ -130,7 +177,10 @@ GPU fields come from ai-o11y's NVIDIA GPU receiver (`otelcol/receiver/nvidiagpur
 - The meaning of a common field follows OpenTelemetry. Where it differs from
   the fields shown by existing screens (for example, CPU user time with or
   without guest time), the difference is not reconciled yet.
-- The GPU receiver has only an `nvidia-smi` source: MIG and XID fields wait for
-  an NVML source, and GPUs of other vendors are not read.
+- The NVIDIA GPU receiver reads `nvidia-smi`, and NVML only for GPM through
+  `aio11y-gpm`: MIG SM utilization needs a Hopper or later GPU and that
+  helper installed, and has not been checked on such a GPU yet. XID errors are
+  counted from the kernel log, so XIDs the kernel's log buffer no longer holds
+  are not counted. GPUs of vendors other than NVIDIA and AMD are not read.
 - Fields whose value only the existing screens compute, such as average I/O
   wait per operation, are not in the catalog yet.

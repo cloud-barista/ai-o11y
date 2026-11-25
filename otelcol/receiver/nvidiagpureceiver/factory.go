@@ -26,7 +26,13 @@ func NewFactory() receiver.Factory {
 func createMetrics(_ context.Context, set receiver.Settings, cfg component.Config, next consumer.Metrics) (receiver.Metrics, error) {
 	c := cfg.(*Config)
 	s := &gpuScraper{source: newNvidiaSMI(c.NvidiaSMI), now: time.Now}
-	sc, err := scraper.NewMetrics(s.scrape)
+	if c.XID.Enabled {
+		s.xid = newXIDCounter(c.XID.Path, set.Logger)
+	}
+	if c.GPM.Enabled {
+		s.gpm = newGPMReader(c.GPM, c.CollectionInterval, set.Logger)
+	}
+	sc, err := scraper.NewMetrics(s.scrape, scraper.WithStart(s.start), scraper.WithShutdown(s.shutdown))
 	if err != nil {
 		return nil, err
 	}

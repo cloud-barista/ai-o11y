@@ -14,16 +14,33 @@ const (
 	// OTLP. The backend stores its metrics under Prometheus names (see
 	// series): system.cpu.time in seconds becomes
 	// system_cpu_time_seconds_total. Its attribute names have no dots and
-	// stay as sent (state, device).
+	// stay as sent (state, device); an attribute name with dots is stored with
+	// underscores like a metric name, as process.executable.name, which the
+	// top_process processor puts on the process scraper's points, is stored as
+	// process_executable_name.
 	CollectorHostmetrics = "hostmetrics"
 	// CollectorNvidiaSMI is the nvidia_gpu receiver built into the collector,
 	// reading nvidia-smi; it writes nvidia_smi.<query field>, stored as
 	// nvidia_smi_<field>_<unit> (see nvidiaSMI).
 	CollectorNvidiaSMI = "nvidia_smi"
-	// CollectorNVML is the NVML source the nvidia_gpu receiver does not have
-	// yet; fields only it can give name it.
-	CollectorNVML = "nvml"
+	// CollectorAMDSMI is the amd_gpu receiver built into the collector,
+	// reading amd-smi metric --json; it writes amd_smi.<path in the JSON>,
+	// stored as amd_smi_<path>_<unit> (see amdSMI).
+	CollectorAMDSMI = "amd_smi"
 )
+
+// SchemaNvidiaKmsg names the fields the nvidia_gpu receiver counts from the
+// kernel log (/dev/kmsg) rather than reads from nvidia-smi; it writes them as
+// nvidia_kmsg.<field>, a monotonic sum the backend stores as
+// nvidia_kmsg_<field>_total. Their expressions are the nvidia_smi collector's,
+// the receiver that writes them.
+const SchemaNvidiaKmsg = "nvidia_kmsg"
+
+// SchemaNVML names the fields the nvidia_gpu receiver reads from NVML, through
+// its helper aio11y-gpm, rather than from nvidia-smi; it writes them as
+// nvml.<field> in percent, stored as nvml_<field>_percent. Their expressions
+// are the nvidia_smi collector's, the receiver that writes them.
+const SchemaNVML = "nvml"
 
 // Capabilities a row can require.
 const (
@@ -32,8 +49,9 @@ const (
 
 // Builtin returns the catalog rows ai-o11y ships with. Common fields carry
 // the OpenTelemetry semantic conventions' names (v1.45.0) and meaning and say
-// how the collectors (hostmetrics, nvidia-smi) provide them; collector metrics
-// with no counterpart there are fields of that collector's own.
+// how the collectors (hostmetrics, nvidia-smi, amd-smi) provide them;
+// collector metrics with no counterpart there are fields of that collector's
+// own.
 func Builtin() []monitoring.MetricRow {
 	var rows []monitoring.MetricRow
 	rows = append(rows, cpuRows()...)
@@ -318,9 +336,15 @@ func systemRows() []monitoring.MetricRow {
 	}
 }
 
+// processRows are the system's process count and the per-process fields. The
+// collector sends per-process series only for the processes using the most
+// CPU or memory (the top_process processor), with process.executable.name and
+// process.pid on every point, stored as process_executable_name and
+// process_pid; the fields add up the processes of one name.
 func processRows() []monitoring.MetricRow {
 	pstate := "process.state"
-	const gap = "per-process collection is waiting on how process ids are kept (top-N in the collector or grouping by name)"
+	const label, name = "process_executable_name", "process.executable.name"
+	perName := func(metric string) string { return `sum by (` + by(label) + `) (` + series(metric) + `)` }
 	return []monitoring.MetricRow{
 		{
 			Name: "system.process.count", Area: "process", Unit: "{process}", Kind: monitoring.KindGauge,
@@ -334,10 +358,22 @@ func processRows() []monitoring.MetricRow {
 			// hostmetrics leaves a status with no processes out.
 			ZeroFill: hmReporting,
 		},
-		{Name: "process.cpu.utilization", Area: "process", Unit: "1", Kind: monitoring.KindRate,
-			Description: "CPU use of a process, one core = 1.", Dimension: "process", DimensionName: "process.executable.name", Gap: gap},
-		{Name: "process.memory.utilization", Area: "process", Unit: "1", Kind: monitoring.KindGauge,
-			Description: "Memory share of a process.", Dimension: "process", DimensionName: "process.executable.name", Gap: gap},
+		{
+			Name: "process.cpu.utilization", Area: "process", Unit: "1", Kind: monitoring.KindGauge,
+			Description: "Share of the time of all CPUs the processes of one name used since the previous collection, all CPU states. Only the processes using the most CPU or memory are collected.",
+			// hostmetrics divides by the host's logical CPUs and splits it by state.
+			Exprs:     hm(perName("process_cpu_utilization_ratio")),
+			Dimension: label, DimensionName: name,
+			Enables: []string{"process.cpu.utilization"},
+		},
+		{
+			Name: "process.memory.utilization", Area: "process", Unit: "1", Kind: monitoring.KindGauge,
+			Description: "Share of the physical memory the processes of one name hold resident. Only the processes using the most CPU or memory are collected.",
+			// hostmetrics reports a percentage (gopsutil MemoryPercent) under unit 1.
+			Exprs:     hm(perName("process_memory_utilization_ratio") + " / 100"),
+			Dimension: label, DimensionName: name,
+			Enables: []string{"process.memory.utilization"},
+		},
 	}
 }
 
@@ -367,53 +403,94 @@ var smiUnits = []struct{ prefix, suffix string }{
 	{"clocks.", "MHz"},
 }
 
+// amdSMI is the stored series name of an amd-smi value. The receiver sends it
+// as amd_smi.<path in amd-smi metric --json> with the unit of its field
+// (amdgpureceiver's fields), which the backend appends: usage.gfx_activity in
+// % is stored as amd_smi_usage_gfx_activity_percent.
+func amdSMI(path string) string {
+	name := CollectorAMDSMI + "_" + strings.ReplaceAll(path, ".", "_")
+	for _, u := range amdUnits {
+		if strings.HasPrefix(path, u.prefix) {
+			return name + "_" + u.suffix
+		}
+	}
+	return name
+}
+
+// amdUnits are the name suffixes of the amd-smi values the rows read that have
+// a unit: the unit as the receiver maps it (MB to MiBy, C to Cel, ...) and as
+// the backend writes it. Counts (pcie.replay_count, ecc.*) have none.
+var amdUnits = []struct{ prefix, suffix string }{
+	{"usage.", "percent"},
+	{"mem_usage.", "mebibytes"},
+	{"power.socket_power", "watts"},
+	{"energy.", "joules"},
+	{"temperature.", "celsius"},
+	{"clock.", "MHz"},
+}
+
 // smi maps a GPU field to its nvidia-smi expression.
 func smi(expr string) map[string]string { return map[string]string{CollectorNvidiaSMI: expr} }
 
-// perGPU is the value of an nvidia-smi series per GPU.
+// perGPU is the value of a GPU receiver's series per GPU.
 func perGPU(name string) string {
 	return `max by (entity_id, uuid) (` + series(name) + `)`
 }
 
+// gpus maps a GPU field to its nvidia-smi and its amd-smi expression.
+func gpus(nvidia, amd string) map[string]string {
+	return map[string]string{CollectorNvidiaSMI: nvidia, CollectorAMDSMI: amd}
+}
+
 // gpuRows are the GPU fields. The common ones carry the OpenTelemetry
 // hardware semantic conventions' names (hw.gpu.*, hw.power), split within a
-// target by hw.id, the GPU's UUID; the rest are nvidia-smi's own query fields.
+// target by hw.id, the GPU's UUID, and are read from nvidia-smi and amd-smi
+// alike; the rest are nvidia-smi's own query fields and amd-smi's own values.
+// Both receivers write percentages and MiB, which the common fields turn into
+// a share (unit 1) and bytes.
 func gpuRows() []monitoring.MetricRow {
 	const dim, dimName = "uuid", "hw.id"
 	task := "hw.gpu.task"
 	util := func(field string) string { return perGPU(nvidiaSMI(field)) + " / 100" }
-	byTask := func(field, value string) string {
-		return fmt.Sprintf(`label_replace(%s, %q, %q, "", "")`, util(field), task, value)
+	amdUtil := func(path string) string { return perGPU(amdSMI(path)) + " / 100" }
+	tagged := func(expr, value string) string {
+		return fmt.Sprintf(`label_replace(%s, %q, %q, "", "")`, expr, task, value)
 	}
+	byTask := func(field, value string) string { return tagged(util(field), value) }
 	const mib = " * 1048576"
 	used, total := perGPU(nvidiaSMI("memory.used")), perGPU(nvidiaSMI("memory.total"))
+	amdUsed, amdTotal := perGPU(amdSMI("mem_usage.used_vram")), perGPU(amdSMI("mem_usage.total_vram"))
 
 	rows := []monitoring.MetricRow{
 		{
 			Name: "hw.gpu.utilization", Area: "gpu", Unit: "1", Kind: monitoring.KindGauge,
-			Description: "Share of time the GPU spent on each hw.gpu.task. Without one, general work (nvidia-smi utilization.gpu).",
-			Exprs:       smi(util("utilization.gpu")),
-			Attribute:   &monitoring.Attribute{Name: "hw.gpu.task", Values: []string{"general", "encoder", "decoder"}},
-			SplitExprs: smi(`sum by (` + by("uuid", task) + `) (` + byTask("utilization.gpu", "general") + ` or ` +
-				byTask("utilization.encoder", "encoder") + ` or ` + byTask("utilization.decoder", "decoder") + `)`),
+			Description: "Share of time the GPU spent on each hw.gpu.task. Without one, general work " +
+				"(nvidia-smi utilization.gpu, amd-smi usage.gfx_activity). amd-smi gives general work only.",
+			Exprs:     gpus(util("utilization.gpu"), amdUtil("usage.gfx_activity")),
+			Attribute: &monitoring.Attribute{Name: "hw.gpu.task", Values: []string{"general", "encoder", "decoder"}},
+			SplitExprs: gpus(`sum by (`+by("uuid", task)+`) (`+byTask("utilization.gpu", "general")+` or `+
+				byTask("utilization.encoder", "encoder")+` or `+byTask("utilization.decoder", "decoder")+`)`,
+				`sum by (`+by("uuid", task)+`) (`+tagged(amdUtil("usage.gfx_activity"), "general")+`)`),
 			Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.gpu.memory.usage", Area: "gpu", Unit: "By", Kind: monitoring.KindGauge,
-			Description: "GPU memory used.", Exprs: smi(used + mib), Dimension: dim, DimensionName: dimName,
+			Description: "GPU memory used.", Exprs: gpus(used+mib, amdUsed+mib), Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.gpu.memory.limit", Area: "gpu", Unit: "By", Kind: monitoring.KindGauge,
-			Description: "Size of the GPU memory.", Exprs: smi(total + mib), Dimension: dim, DimensionName: dimName,
+			Description: "Size of the GPU memory.", Exprs: gpus(total+mib, amdTotal+mib), Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.gpu.memory.utilization", Area: "gpu", Unit: "1", Kind: monitoring.KindGauge,
-			Description: "Share of the GPU memory used.", Exprs: smi(used + " / " + total), Dimension: dim, DimensionName: dimName,
+			Description: "Share of the GPU memory used.", Exprs: gpus(used+" / "+total, amdUsed+" / "+amdTotal),
+			Dimension: dim, DimensionName: dimName,
 		},
 		{
 			Name: "hw.power", Area: "gpu", Unit: "W", Kind: monitoring.KindGauge,
 			Description: "Power drawn by the GPU (hw.type gpu).",
-			Exprs:       smi(perGPU(nvidiaSMI("power.draw"))), Dimension: dim, DimensionName: dimName,
+			Exprs:       gpus(perGPU(nvidiaSMI("power.draw")), perGPU(amdSMI("power.socket_power"))),
+			Dimension:   dim, DimensionName: dimName,
 		},
 	}
 
@@ -445,13 +522,52 @@ func gpuRows() []monitoring.MetricRow {
 		})
 	}
 
-	// NVIDIA fields only NVML gives; the receiver has no NVML source yet.
-	const nvml = "the GPU receiver has no NVML source yet; nvidia-smi does not report it"
-	rows = append(rows,
-		monitoring.MetricRow{Name: "mig.sm.utilization", Schema: CollectorNVML, Area: "gpu", Unit: "1",
-			Kind: monitoring.KindGauge, Description: "SM activity of a MIG instance.", Gap: nvml},
-		monitoring.MetricRow{Name: "xid.errors", Schema: CollectorNVML, Area: "gpu", Unit: "{error}",
-			Kind: monitoring.KindGauge, Description: "XID errors the driver reported.", Gap: nvml},
-	)
+	// amd-smi's own fields, under their path in amd-smi metric --json.
+	amdOwn := []struct{ field, unit, desc string }{
+		{"usage.umc_activity", "%", "Share of time the memory controller was busy."},
+		{"usage.mm_activity", "%", "Share of time the multimedia engine was busy."},
+		{"temperature.edge", "Cel", "GPU temperature at the edge of the die."},
+		{"temperature.hotspot", "Cel", "Hottest point of the GPU die (junction)."},
+		{"temperature.mem", "Cel", "GPU memory temperature."},
+		{"clock.gfx_0.clk", "MHz", "Clock of the first graphics domain."},
+		{"clock.mem_0.clk", "MHz", "Memory clock."},
+		{"mem_usage.used_gtt", "MiBy", "Host memory mapped for the GPU (GTT) in use."},
+		{"mem_usage.total_gtt", "MiBy", "Size of the host memory the GPU can map (GTT)."},
+		{"energy.total_energy_consumption", "J", "Energy the GPU has used, a counter that only grows until it resets."},
+		{"pcie.replay_count", "", "PCIe packets replayed, a counter."},
+		{"ecc.total_correctable_count", "{error}", "Correctable ECC errors the driver counted."},
+		{"ecc.total_uncorrectable_count", "{error}", "Uncorrectable ECC errors the driver counted."},
+		{"ecc.total_deferred_count", "{error}", "Deferred ECC errors the driver counted."},
+	}
+	for _, f := range amdOwn {
+		rows = append(rows, monitoring.MetricRow{
+			Name: f.field, Schema: CollectorAMDSMI, Area: "gpu", Unit: f.unit, Kind: monitoring.KindGauge,
+			Description: f.desc, Exprs: map[string]string{CollectorAMDSMI: perGPU(amdSMI(f.field))}, Dimension: dim, DimensionName: dim,
+		})
+	}
+
+	// XID errors the receiver counts from the kernel log: a cumulative count
+	// per GPU and XID number since boot, summed over the XID numbers.
+	rows = append(rows, monitoring.MetricRow{
+		Name: "xid.errors", Schema: SchemaNvidiaKmsg, Area: "gpu", Unit: "{error}", Kind: monitoring.KindGauge,
+		Description: "XID errors the NVIDIA driver logged to the kernel log since boot, all XID numbers together, " +
+			"as far back as the kernel's log buffer holds. A GPU with none has no series.",
+		Exprs:     smi(`sum by (entity_id, uuid) (` + series(SchemaNvidiaKmsg+"_xid_errors_total") + `)`),
+		Dimension: dim, DimensionName: dim,
+	})
+
+	// SM utilization per MIG instance, which only NVML GPM gives. The receiver
+	// writes GPM in percent for the whole GPU and for each MIG instance, the
+	// latter with mig "true" and the GPU instance id GPM sampled; the parent
+	// GPU's uuid and gpu_instance_id keep the instances apart, also when NVML
+	// gave no MIG UUID.
+	const gi = "gpu_instance_id"
+	rows = append(rows, monitoring.MetricRow{
+		Name: "mig.sm.utilization", Schema: SchemaNVML, Area: "gpu", Unit: "1", Kind: monitoring.KindGauge,
+		Description: "Share of time the SMs of a MIG instance were busy, per GPU and GPU instance (NVML GPM). " +
+			"Only Hopper and later GPUs have GPM; a GPU without it or without MIG has no series.",
+		Exprs:     smi(`max by (` + by("uuid", gi) + `) (` + series(SchemaNVML+"_gpm_sm_utilization_percent", `mig="true"`) + `) / 100`),
+		Dimension: gi, DimensionName: gi,
+	})
 	return rows
 }

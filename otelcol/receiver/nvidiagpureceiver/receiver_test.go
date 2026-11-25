@@ -51,10 +51,31 @@ func TestConfigValidate(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("default config: %v", err)
 	}
+	if cfg.XID.Enabled || cfg.XID.Path != "/dev/kmsg" {
+		t.Errorf("default xid = %+v, want off, reading /dev/kmsg", cfg.XID)
+	}
+	if cfg.GPM.Enabled || cfg.GPM.Path != "" || cfg.GPM.SampleInterval != time.Second {
+		t.Errorf("default gpm = %+v, want off, looked up, sampling over 1s", cfg.GPM)
+	}
+	on := createDefaultConfig()
+	on.GPM.Enabled = true
+	if err := on.Validate(); err != nil {
+		t.Errorf("gpm on by default: %v", err)
+	}
 	for name, mutate := range map[string]func(*Config){
 		"unknown source": func(c *Config) { c.Source = "nvml" },
 		"no path":        func(c *Config) { c.NvidiaSMI.Path = "" },
 		"no interval":    func(c *Config) { c.CollectionInterval = 0 },
+		"xid no path":    func(c *Config) { c.XID = XIDConfig{Enabled: true} },
+		"gpm sample of 100ms": func(c *Config) {
+			c.GPM = GPMConfig{Enabled: true, SampleInterval: 100 * time.Millisecond}
+		},
+		"gpm sample as long as the collection": func(c *Config) {
+			c.GPM = GPMConfig{Enabled: true, SampleInterval: c.CollectionInterval}
+		},
+		"gpm sample as long as the timeout": func(c *Config) {
+			c.GPM = GPMConfig{Enabled: true, SampleInterval: c.Timeout}
+		},
 	} {
 		c := createDefaultConfig()
 		mutate(c)

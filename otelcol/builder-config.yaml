@@ -11,17 +11,26 @@ dist:
 
 receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.164.1
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/journaldreceiver v0.164.1
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.164.0
   - gomod: github.com/cloud-barista/ai-o11y/otelcol/receiver/nvidiagpureceiver v0.0.0
+  - gomod: github.com/cloud-barista/ai-o11y/otelcol/receiver/amdgpureceiver v0.0.0
 processors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/attributesprocessor v0.164.1
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.164.0
+  - gomod: go.opentelemetry.io/collector/processor/memorylimiterprocessor v0.164.0
+  - gomod: github.com/cloud-barista/ai-o11y/otelcol/processor/topprocessprocessor v0.0.0
 exporters:
   - gomod: go.opentelemetry.io/collector/exporter/otlphttpexporter v0.164.0
 connectors:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/connector/failoverconnector v0.164.1
 extensions:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/basicauthextension v0.164.1
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/bearertokenauthextension v0.164.1
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/storage/filestorage v0.164.1
 
 # ai-o11y's own components are built from this directory.
 replaces:
   - github.com/cloud-barista/ai-o11y/otelcol/receiver/nvidiagpureceiver => ../receiver/nvidiagpureceiver
+  - github.com/cloud-barista/ai-o11y/otelcol/receiver/amdgpureceiver => ../receiver/amdgpureceiver
+  - github.com/cloud-barista/ai-o11y/otelcol/processor/topprocessprocessor => ../processor/topprocessprocessor

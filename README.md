@@ -4,7 +4,9 @@ Monitoring control plane for the AI-MCMP platform. It keeps the monitoring
 targets, renders the configuration of the collector that runs on each target,
 and answers metric queries over a Prometheus-family backend (Thanos or
 VictoriaMetrics). Samples go from the collectors to the backend, never through
-this service.
+this service. Collectors can also send the host's systemd journal and the
+traces of its applications over OTLP, such as to VictoriaLogs and
+VictoriaTraces; ai-o11y does not query them.
 
 ```
 CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / VictoriaMetrics
@@ -12,7 +14,8 @@ CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / V
                      collector config                  │ OTLP/HTTP
                               ▼                        │
                         VM: aio11y-otelcol ────────────┘
-                        (host metrics, NVIDIA GPUs)
+                        (host metrics, NVIDIA and AMD GPUs;
+                         journal and traces when configured)
 ```
 
 ## Layout
@@ -27,7 +30,8 @@ CB-Tumblebug ──(targets)──▶ ai-o11y ──(PromQL)──▶ Thanos / V
 | `internal/monitoring/query` | Renders queries to PromQL and runs them in chunks of targets. |
 | `internal/monitoring/backend` | Prometheus query API client and the Thanos and VictoriaMetrics backends, selected by `AIO11Y_BACKEND_PROVIDER`. |
 | `internal/monitoring/collector` | Renders the collector configuration of a target. |
-| `otelcol/` | The collector, built with the OpenTelemetry Collector Builder, and its own components (`otelcol/receiver/nvidiagpureceiver`). Not part of the service's Go module. |
+| `otelcol/` | The collector, built with the OpenTelemetry Collector Builder, and its own components (`otelcol/receiver/nvidiagpureceiver`, `otelcol/receiver/amdgpureceiver`). Not part of the service's Go module. |
+| `otelcol/cmd/aio11y-gpm` | Helper the NVIDIA GPU receiver runs to read NVML GPM (SM utilization per MIG instance); a separate executable because opening NVML links libc and the collector stays static. |
 
 ## Build and run
 
@@ -37,10 +41,19 @@ make test
 make lint
 make swag             # api/docs from the handlers' godoc
 
-make otelcol          # otelcol/_build/aio11y-otelcol (static, linux/amd64)
+make otelcol          # otelcol/_build/aio11y-otelcol (static, linux/amd64) and aio11y-gpm
 make otelcol-validate # render a target's configuration and validate it with the collector
-make -C otelcol test  # tests of the collector's own components
+make -C otelcol test  # tests of the collector's own components, its helpers and install scripts
 ```
+
+To try ai-o11y with a replicated store for metrics, logs and traces on one
+host, `cp .env.example .env && docker compose up -d` at the top of the
+repository; [deploy](deploy/README.md) explains the two choices of metrics
+store (VictoriaMetrics, or Prometheus with Thanos) and how to stop a node.
+
+To run the collector on a VM, [otelcol/install](otelcol/install/README.md)
+registers the VM as a target, fetches its configuration and installs a systemd
+service.
 
 The service starts with no configuration; each part it is not given (database,
 CB-Tumblebug, metrics backend) leaves the routes that need it answering 503.
@@ -68,10 +81,43 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
 
 - **Collector**: the collector's own metrics are off by default
   (`AIO11Y_COLLECTOR_TELEMETRY_PORT=0`) and nothing reads them yet; set a port
-  to serve them on localhost.
-- **GPU**: the GPU receiver reads `nvidia-smi` only. MIG and XID fields wait for
-  an NVML source, GPUs of other vendors are not read, and a target's metric
-  listing cannot tell which fields its particular GPU leaves empty.
+  to serve them on localhost. While the backend does not answer, the collector
+  keeps samples on its disk (`AIO11Y_COLLECTOR_STORAGE_DIR`, up to 256 MiB,
+  newest dropped beyond that) and sends them in order once it answers again,
+  also after a collector restart. A restart puts the request that was being
+  sent behind the others, so a backend that refuses out-of-order samples
+  (Prometheus without an out-of-order window) may refuse it. The collector
+  refuses new samples while it uses more than 300 MiB of memory (memory
+  limiter at 400 MiB with 100 MiB headroom).
+- **Logs and traces**: with `AIO11Y_BACKEND_LOGS_WRITE_URL` or
+  `_TRACES_WRITE_URL` set, collectors send logs or traces as
+  `AIO11Y_BACKEND_WRITE_MODE` says, by the same disk queue rules as samples,
+  each signal with queues of its own (up to 256 MiB each) under
+  `AIO11Y_COLLECTOR_STORAGE_DIR`. Logs are the systemd journal from the
+  collector's first start on (`journalctl`, priority info and above), read on
+  after a restart from where it stopped; Windows targets send no logs, their
+  event log is not read yet. Traces are what applications on the host send the
+  collector over OTLP on `127.0.0.1:4317` (gRPC) and `127.0.0.1:4318` (HTTP):
+  another program holding either port there keeps the collector from
+  starting. ai-o11y has no logs or traces query yet.
+- **Processes**: per-process fields cover only the 10 processes using the
+  most CPU and the 10 using the most memory in each collection, added up by
+  executable name.
+- **GPU**: NVIDIA GPUs are read with `nvidia-smi` and AMD GPUs with `amd-smi`;
+  other vendors are not read. SM utilization per MIG instance comes from NVML
+  GPM, which only Hopper and later GPUs have, through the helper `aio11y-gpm`
+  installed next to the collector; without either it is left out. It has not
+  been checked on a GPU with GPM yet, only with a fake NVML. XID errors
+  are counted from the kernel log (`/dev/kmsg`) since boot, as far back as its
+  buffer holds. The common `hw.gpu.*` fields and `hw.power` read both
+  vendors; amd-smi gives no encoder or decoder share. `amd-smi` needs root
+  (`/dev/kfd`), and an SR-IOV virtual function such as the Radeon PRO V710 on
+  Azure reports little more than VRAM use. A target's metric listing cannot
+  tell which fields its particular GPU leaves empty. The GPU model and count
+  come from the node's CB-Tumblebug spec; where the spec has no count (Azure
+  Standard_NV4ads_V710_v5), the target's `gpuCount` stays 0 and the model alone
+  chooses the GPU receiver. A spec CB-Tumblebug cannot answer for leaves the
+  target without GPUs until a later sync reads it.
 - **Registration**: the body of `POST /targets` is ai-app's, named in
   CB-Tumblebug's terms (`nsId`, `infraId`, `nodeId`); another management
   platform needs it reworked.
@@ -84,14 +130,33 @@ All routes are under `/aio11y` and, when `AIO11Y_AUTH_TOKEN` is set, need
   `otlp.translation_strategy`, VictoriaMetrics with
   `-opentelemetry.usePrometheusNaming`. A Thanos Receive stores the same names;
   ai-o11y has not been run against one yet.
-  `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now.
+  `AIO11Y_BACKEND_PARTIAL_RESPONSE` is off for now and applies to Thanos only;
+  a VictoriaMetrics cluster's vmselect answers partially unless started with
+  `-search.denyPartialResponse`.
 - **Write failover**: with several `AIO11Y_BACKEND_WRITE_URL`s and
-  `AIO11Y_BACKEND_WRITE_MODE=failover` the collector keeps no queue, so samples
-  are dropped while every address fails, and a few at each switch.
-- **Accounts**: basic auth only. Collectors read the write account's password
-  from `AIO11Y_WRITE_PASSWORD` on their host; a collector without it still
-  starts, and every write is refused. Over plain HTTP the accounts travel in
-  clear text; outside a private network the backend needs TLS in front.
+  `AIO11Y_BACKEND_WRITE_MODE=failover` only the last address has the disk
+  queue: while every address fails, samples wait there and go to the last
+  address once it answers, even if an earlier one answers first. The collector
+  tries the first address again every collection interval (the failover
+  connector's retry interval).
+- **Write to every address**: with `AIO11Y_BACKEND_WRITE_MODE=all` each address
+  has a disk queue of its own (up to 256 MiB each), so an address that fails
+  catches up from it once it answers while the others go on.
+- **Accounts**: queries are sent with a basic auth account
+  (`AIO11Y_BACKEND_QUERY_USERNAME`, `_QUERY_PASSWORD`) or a bearer token
+  (`AIO11Y_BACKEND_QUERY_BEARER_TOKEN`), not both; https query addresses are
+  verified against the system's CAs or `AIO11Y_BACKEND_QUERY_TLS_CA_FILE`.
+  Collectors write with a basic auth account (`AIO11Y_BACKEND_WRITE_USERNAME`)
+  or a bearer token (`AIO11Y_BACKEND_WRITE_BEARER=true`), not both, the same
+  for metrics, logs and traces. ai-o11y knows neither the password nor the
+  token: collectors read them from `AIO11Y_WRITE_PASSWORD` or
+  `AIO11Y_WRITE_TOKEN` on their host. A collector without the password still
+  starts, and every write is refused; one without the token does not start.
+  https write addresses are verified against each collector host's CAs or
+  `AIO11Y_BACKEND_WRITE_TLS_CA_FILE`, which ai-o11y reads at startup and puts
+  into the rendered configuration, so the CA need not be installed on the
+  hosts. Over plain HTTP the accounts and tokens travel in clear text; outside
+  a private network the backend needs TLS in front.
 - **Metric catalog**: see the known limits in
   [docs/metric-catalog.md](docs/metric-catalog.md).
 

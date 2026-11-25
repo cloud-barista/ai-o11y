@@ -1,0 +1,21 @@
+global:
+  # Nothing is scraped; samples come over OTLP from the relays.
+  # The sidecar labels every block with these. The two replicas differ only in
+  # "replica" (REPLICA from the container's environment), which thanos-query
+  # merges on.
+  external_labels:
+    replica: ${REPLICA}
+
+otlp:
+  # Store Prometheus names (system.cpu.time in seconds as
+  # system_cpu_time_seconds_total, dots in labels as underscores), the names
+  # ai-o11y's metric catalog queries. It is the default, written out because
+  # the catalog depends on it.
+  translation_strategy: UnderscoreEscapingWithSuffixes
+
+storage:
+  tsdb:
+    # Collectors send at their own times, and a relay sends what it queued
+    # while this replica was down once it is back, so a late sample is not
+    # rejected.
+    out_of_order_time_window: 30m

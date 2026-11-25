@@ -50,6 +50,8 @@ type Config struct {
 	Limits         query.ChunkLimits
 	// Headers are set on every query request.
 	Headers map[string]string
+	// TLS is how https query addresses are verified.
+	TLS promapi.TLS
 }
 
 // Backend implements monitoring.Backend over a Thanos Querier.
@@ -87,6 +89,7 @@ func New(cfg Config, renderer query.PromQL) (*Backend, error) {
 		BaseURLs:       cfg.QueryURLs,
 		Timeout:        cfg.Timeout,
 		Headers:        cfg.Headers,
+		TLS:            cfg.TLS,
 		Params: url.Values{
 			// The Querier deduplicates by default; it is sent so a querier
 			// started otherwise still merges replicas.

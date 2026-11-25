@@ -19,7 +19,7 @@ func read(t *testing.T, name string) []byte {
 	return b
 }
 
-// fakeSMI answers --help-query-gpu and --query-gpu from recorded output.
+// fakeSMI answers --help-query-gpu and --query-gpu from files in testdata.
 func fakeSMI(t *testing.T, help, query string) (*nvidiaSMI, *[]string) {
 	t.Helper()
 	var asked []string
@@ -35,8 +35,9 @@ func fakeSMI(t *testing.T, help, query string) (*nvidiaSMI, *[]string) {
 }
 
 // TestReadRecordedGTX1050Ti reads output recorded from a GeForce GTX 1050 Ti
-// on driver 580.178.04: the fields it does not support are [N/A] or N/A and
-// are left out.
+// on driver 580.178.04, with the uuid replaced by a placeholder and the
+// pci.bus_id column, which the recording did not query, added by hand: the
+// fields it does not support are [N/A] or N/A and are left out.
 func TestReadRecordedGTX1050Ti(t *testing.T) {
 	s, asked := fakeSMI(t, "help-query-gpu-580.txt", "query-gtx1050ti-580.csv")
 	gpus, err := s.Read(context.Background())
@@ -47,8 +48,12 @@ func TestReadRecordedGTX1050Ti(t *testing.T) {
 		t.Fatalf("gpus = %d", len(gpus))
 	}
 	g := gpus[0]
-	if g.Attributes["index"] != "0" || g.Attributes["name"] != "NVIDIA GeForce GTX 1050 Ti" || !strings.HasPrefix(g.Attributes["uuid"], "GPU-") {
+	if g.Attributes["index"] != "0" || g.Attributes["name"] != "NVIDIA GeForce GTX 1050 Ti" || !strings.HasPrefix(g.Attributes["uuid"], "GPU-") ||
+		len(g.Attributes) != 3 {
 		t.Errorf("attributes = %v", g.Attributes)
+	}
+	if g.PCIBusID != "00000000:01:00.0" {
+		t.Errorf("PCI bus id = %q", g.PCIBusID)
 	}
 	got := map[string]Value{}
 	for _, v := range g.Values {
@@ -73,7 +78,7 @@ func TestReadRecordedGTX1050Ti(t *testing.T) {
 			t.Errorf("%s is not supported on this GPU but was read", field)
 		}
 	}
-	if len(*asked) != 2 || !strings.HasPrefix((*asked)[1], "--query-gpu=index,uuid,name,utilization.gpu,") {
+	if len(*asked) != 2 || !strings.HasPrefix((*asked)[1], "--query-gpu=index,uuid,name,pci.bus_id,utilization.gpu,") {
 		t.Errorf("asked %q", *asked)
 	}
 	if _, err := s.Read(context.Background()); err != nil || len(*asked) != 3 {
@@ -124,7 +129,7 @@ func TestReadRetriesHelpAfterFailure(t *testing.T) {
 		if args[0] == "--help-query-gpu" {
 			return []byte(`"utilization.gpu"` + "\n"), nil
 		}
-		return []byte("index, uuid, name, utilization.gpu [%]\n0, GPU-x, T4, 5\n"), nil
+		return []byte("index, uuid, name, pci.bus_id, utilization.gpu [%]\n0, GPU-x, T4, 00000001:00:00.0, 5\n"), nil
 	}
 	if _, err := s.Read(context.Background()); err == nil {
 		t.Fatal("Read succeeded while nvidia-smi failed")

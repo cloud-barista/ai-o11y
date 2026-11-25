@@ -14,7 +14,12 @@ import (
 const NvidiaGPUReceiver = "nvidia_gpu"
 
 // NvidiaGPU renders the NVIDIA GPU receiver, reading nvidia-smi, for a VM with
-// GPUs.
+// GPUs. It also counts the XID errors the driver logs to the kernel log
+// (/dev/kmsg), which the collector can read since it runs as root, and reads
+// NVML GPM (SM utilization per MIG instance) through the aio11y-gpm helper.
+// GPM is turned on for every NVIDIA VM: where the helper is not installed or
+// the GPU has no GPM (older than Hopper), the receiver leaves it out and
+// collects the rest.
 type NvidiaGPU struct {
 	Interval time.Duration
 }
@@ -30,9 +35,18 @@ func (NvidiaGPU) Path() monitoring.Path { return monitoring.PathAgent }
 // AppliesTo implements monitoring.CollectorKind: a VM the platform reports
 // NVIDIA GPUs on. The vendor is known from the GPU model, which CB-Tumblebug
 // names with it ("NVIDIA T4", "nvidia-a100-80gb"); a model that does not name
-// NVIDIA, or none, gets no GPU receiver rather than a guess.
+// NVIDIA, or none, gets no GPU receiver rather than a guess. The count may be
+// unknown (0) while the model is not: see hasGPU.
 func (NvidiaGPU) AppliesTo(t monitoring.Target) bool {
-	return t.Kind == "vm" && t.GPUCount > 0 && strings.Contains(strings.ToLower(t.GPUModel), "nvidia")
+	return t.Kind == "vm" && hasGPU(t) && strings.Contains(strings.ToLower(t.GPUModel), "nvidia")
+}
+
+// hasGPU reports whether the platform reports GPUs on t: a count, or a model
+// alone. CB-Tumblebug leaves the count of some specs out (acceleratorCount is
+// null for Azure Standard_NV4ads_V710_v5) while naming the model, and the
+// tumblebug source fills the model only for a spec whose accelerator is a GPU.
+func hasGPU(t monitoring.Target) bool {
+	return t.GPUCount > 0 || t.GPUModel != ""
 }
 
 // Render implements monitoring.CollectorKind.
@@ -46,6 +60,8 @@ func (g NvidiaGPU) Render(monitoring.Target, monitoring.MetricCatalog) (monitori
 			NvidiaGPUReceiver: map[string]any{
 				"collection_interval": interval.String(),
 				"source":              catalog.CollectorNvidiaSMI,
+				"xid":                 map[string]any{"enabled": true},
+				"gpm":                 map[string]any{"enabled": true},
 			},
 		},
 	}, nil

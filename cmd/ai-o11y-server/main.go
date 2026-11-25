@@ -6,7 +6,9 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/cloud-barista/ai-o11y/internal/config"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring"
+	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/promapi"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/thanos"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/backend/victoria"
 	"github.com/cloud-barista/ai-o11y/internal/monitoring/catalog"
@@ -122,10 +125,20 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 	if err != nil {
 		return rest.Deps{}, fmt.Errorf("built-in metric catalog: %w", err)
 	}
+	access, err := writeAccess(cfg.Backend)
+	if err != nil {
+		return rest.Deps{}, err
+	}
 	deps := rest.Deps{
-		Catalog:          cat,
-		Collectors:       []monitoring.CollectorKind{collector.Hostmetrics{}, collector.NvidiaGPU{}},
-		CollectorOptions: collector.Options{TelemetryPort: cfg.Collector.TelemetryPort, WriteMode: collector.WriteMode(cfg.Backend.WriteMode)},
+		Catalog:    cat,
+		Collectors: []monitoring.CollectorKind{collector.Hostmetrics{}, collector.NvidiaGPU{}, collector.AMDGPU{}},
+		CollectorOptions: collector.Options{
+			TelemetryPort:   cfg.Collector.TelemetryPort,
+			StorageDir:      cfg.Collector.StorageDir,
+			WriteMode:       collector.WriteMode(cfg.Backend.WriteMode),
+			LogsEndpoints:   writeEndpoints(cfg.Backend.LogsWriteURLs, access),
+			TracesEndpoints: writeEndpoints(cfg.Backend.TracesWriteURLs, access),
+		},
 	}
 	if src, err := sources.Get(tumblebug.ProviderName); err == nil {
 		deps.Source = src
@@ -148,7 +161,7 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 		}
 	}
 
-	b, err := newBackend(cfg, query.PromQL{Catalog: cat})
+	b, err := newBackend(cfg, query.PromQL{Catalog: cat}, access)
 	if err != nil {
 		return rest.Deps{}, err
 	}
@@ -158,10 +171,11 @@ func newDeps(cfg *config.Config, sources *monitoring.Registry[monitoring.TargetS
 	return deps, nil
 }
 
-// newBackend builds the metrics backend AIO11Y_BACKEND_PROVIDER selects. It returns nil
+// newBackend builds the metrics backend AIO11Y_BACKEND_PROVIDER selects, its
+// write addresses written to as access says (see writeAccess). It returns nil
 // when no query URL is set, leaving queries and collector configuration
 // unavailable.
-func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, error) {
+func newBackend(cfg *config.Config, renderer query.PromQL, access monitoring.Endpoint) (monitoring.Backend, error) {
 	bc := cfg.Backend
 	if len(bc.QueryURLs) == 0 {
 		log.Warn().Msg("AIO11Y_BACKEND_QUERY_URL is not set: queries and collector configuration are unavailable")
@@ -170,32 +184,80 @@ func newBackend(cfg *config.Config, renderer query.PromQL) (monitoring.Backend, 
 	if len(bc.WriteURLs) == 0 {
 		log.Warn().Msg("AIO11Y_BACKEND_WRITE_URL is not set: collector configuration is unavailable")
 	}
-	write := make([]monitoring.Endpoint, len(bc.WriteURLs))
-	for i, u := range bc.WriteURLs {
-		write[i] = monitoring.Endpoint{URL: u}
-		if bc.WriteUsername != "" {
-			write[i].BasicAuth = &monitoring.BasicAuth{Username: bc.WriteUsername, PasswordEnv: collector.WritePasswordEnv}
-		}
-	}
+	write := writeEndpoints(bc.WriteURLs, access)
 	limits := query.ChunkLimits{MaxIDs: bc.MaxIDs, MaxConcurrent: bc.MaxConcurrent}
 	var headers map[string]string
-	if bc.QueryUsername != "" {
+	switch {
+	case bc.QueryUsername != "":
 		headers = map[string]string{"Authorization": basicAuth(bc.QueryUsername, bc.QueryPassword)}
+	case bc.QueryBearerToken != "":
+		headers = map[string]string{"Authorization": "Bearer " + bc.QueryBearerToken}
+	}
+	tlsCfg := promapi.TLS{CAFile: bc.QueryTLSCAFile, InsecureSkipVerify: bc.QueryTLSInsecureSkipVerify}
+	if tlsCfg.InsecureSkipVerify {
+		log.Warn().Msg("AIO11Y_BACKEND_QUERY_TLS_INSECURE_SKIP_VERIFY is on: query addresses' certificates are not verified")
 	}
 	switch bc.Provider {
 	case config.BackendVictoria:
 		return victoria.New(victoria.Config{
 			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits, Headers: headers,
-			PartialResponse: bc.PartialResponse,
+			TLS: tlsCfg, PartialResponse: bc.PartialResponse,
 		}, renderer)
 	case config.BackendThanos:
 		return thanos.New(thanos.Config{
 			QueryURLs: bc.QueryURLs, Write: write, Timeout: bc.Timeout, ConnectTimeout: bc.ConnectTimeout, Limits: limits, Headers: headers,
-			PartialResponse: bc.PartialResponse,
+			TLS: tlsCfg, PartialResponse: bc.PartialResponse,
 		}, renderer)
 	default:
 		return nil, fmt.Errorf("unknown metrics backend %q", bc.Provider)
 	}
+}
+
+// writeEndpoints are the write addresses urls, each written to as access
+// says.
+func writeEndpoints(urls []string, access monitoring.Endpoint) []monitoring.Endpoint {
+	write := make([]monitoring.Endpoint, len(urls))
+	for i, u := range urls {
+		write[i] = access
+		write[i].URL = u
+	}
+	return write
+}
+
+// writeAccess is how collectors write to every write address, of every
+// signal, with no URL set: the write account's username or a bearer token,
+// whose password or token is read on the collector's host, and the CA the
+// addresses are verified against. The CA file is read here, at startup, and
+// rendered into each collector configuration; one that cannot be read or holds
+// no PEM certificate is an error.
+func writeAccess(bc config.BackendConfig) (monitoring.Endpoint, error) {
+	var access monitoring.Endpoint
+	switch {
+	case bc.WriteUsername != "" && bc.WriteBearer:
+		return access, errors.New("AIO11Y_BACKEND_WRITE_USERNAME and _WRITE_BEARER cannot be set together")
+	case bc.WriteUsername != "":
+		access.BasicAuth = &monitoring.BasicAuth{Username: bc.WriteUsername, PasswordEnv: collector.WritePasswordEnv}
+	case bc.WriteBearer:
+		access.BearerTokenEnv = collector.WriteTokenEnv
+	}
+	if bc.WriteTLSCAFile == "" && !bc.WriteTLSInsecureSkipVerify {
+		return access, nil
+	}
+	access.TLS = &monitoring.EndpointTLS{InsecureSkipVerify: bc.WriteTLSInsecureSkipVerify}
+	if bc.WriteTLSInsecureSkipVerify {
+		log.Warn().Msg("AIO11Y_BACKEND_WRITE_TLS_INSECURE_SKIP_VERIFY is on: collectors do not verify write addresses' certificates")
+	}
+	if bc.WriteTLSCAFile != "" {
+		pem, err := os.ReadFile(bc.WriteTLSCAFile)
+		if err != nil {
+			return access, fmt.Errorf("failed to read write CA file: %w", err)
+		}
+		if !x509.NewCertPool().AppendCertsFromPEM(pem) {
+			return access, fmt.Errorf("write CA file %s holds no PEM certificate", bc.WriteTLSCAFile)
+		}
+		access.TLS.CAPEM = string(pem)
+	}
+	return access, nil
 }
 
 // basicAuth is the Authorization header value of a basic auth account.
